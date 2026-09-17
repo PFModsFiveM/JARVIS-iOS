@@ -8,7 +8,7 @@ struct PairingView: View {
 
     @State private var chosen: FoundPC?
     @State private var manualHost = ""
-    @State private var manualPort = "47823"
+    @State private var manualPort = String(JarvisService.defaultPort)
     @State private var code = ""
     @State private var pairing = false
 
@@ -117,11 +117,12 @@ struct PairingView: View {
         model.toast = nil
 
         if !manualHost.isEmpty {
-            let port = UInt16(manualPort) ?? 47823
-            await model.pair(endpoint: .hostPort(host: NWEndpoint.Host(manualHost), port: NWEndpoint.Port(rawValue: port) ?? 47823),
-                             serviceName: nil, host: manualHost, port: port, code: code)
+            let port = UInt16(manualPort) ?? JarvisService.defaultPort
+            let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(manualHost),
+                                               port: NWEndpoint.Port(rawValue: port) ?? 47823)
+            await model.pair(endpoint: endpoint, serviceName: nil, host: manualHost, port: port, code: code)
         } else if let chosen {
-            await model.pair(endpoint: chosen.endpoint, serviceName: chosen.name, host: nil, port: 47823, code: code)
+            await model.pair(endpoint: chosen.endpoint, serviceName: chosen.name, host: nil, port: JarvisService.defaultPort, code: code)
         }
     }
 }

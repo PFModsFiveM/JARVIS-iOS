@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import Foundation
 
 /// JARVIS's answers, spoken on the phone with the best British English voice installed.
@@ -36,10 +37,16 @@ final class Voice: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.onSpeaking?(false) }
+        Task { @MainActor in self.finished() }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.onSpeaking?(false) }
+        Task { @MainActor in self.finished() }
+    }
+
+    /// Only the last utterance's ending counts, and only if nothing is being spoken by now.
+    private func finished() {
+        guard !synthesizer.isSpeaking else { return }
+        onSpeaking?(false)
     }
 }

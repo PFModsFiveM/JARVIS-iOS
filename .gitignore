@@ -1,5 +1,5 @@
-*.xcodeproj/
 xcuserdata/
 DerivedData/
 build/
 .DS_Store
+*.xcworkspace/xcuserdata/

@@ -3,9 +3,9 @@ import Foundation
 
 /// Siri, Shortcuts and the Action button. Each intent connects to the PC, does one thing, and answers.
 struct AskJarvisIntent: AppIntent {
-    static let title: LocalizedStringResource = "Ask JARVIS"
-    static let description = IntentDescription("Sends a request to JARVIS on your PC and speaks the answer.")
-    static let openAppWhenRun = false
+    static var title: LocalizedStringResource { "Ask JARVIS" }
+    static var description: IntentDescription { "Sends a request to JARVIS on your PC and speaks the answer." }
+    static var openAppWhenRun: Bool { false }
 
     @Parameter(title: "Request", requestValueDialog: "What would you like, sir?")
     var request: String
@@ -21,9 +21,9 @@ struct AskJarvisIntent: AppIntent {
 }
 
 struct LockPCIntent: AppIntent {
-    static let title: LocalizedStringResource = "Lock my PC"
-    static let description = IntentDescription("Locks Windows on your PC, the same as Win+L.")
-    static let openAppWhenRun = false
+    static var title: LocalizedStringResource { "Lock my PC" }
+    static var description: IntentDescription { "Locks Windows on your PC, the same as Win+L." }
+    static var openAppWhenRun: Bool { false }
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
@@ -33,9 +33,9 @@ struct LockPCIntent: AppIntent {
 }
 
 struct SecurityStatusIntent: AppIntent {
-    static let title: LocalizedStringResource = "JARVIS security status"
-    static let description = IntentDescription("Says what the Security Protocol on your PC is doing.")
-    static let openAppWhenRun = false
+    static var title: LocalizedStringResource { "JARVIS security status" }
+    static var description: IntentDescription { "Says what the Security Protocol on your PC is doing." }
+    static var openAppWhenRun: Bool { false }
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
@@ -49,9 +49,9 @@ struct SecurityStatusIntent: AppIntent {
 }
 
 struct InitiateSecurityIntent: AppIntent {
-    static let title: LocalizedStringResource = "Initiate Security Protocol"
-    static let description = IntentDescription("Puts the challenge up on your PC now. If it isn't answered, Windows locks.")
-    static let openAppWhenRun = false
+    static var title: LocalizedStringResource { "Initiate Security Protocol" }
+    static var description: IntentDescription { "Puts the challenge up on your PC now. If it isn't answered, Windows locks." }
+    static var openAppWhenRun: Bool { false }
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {

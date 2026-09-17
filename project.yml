@@ -1,29 +1,65 @@
-# XcodeGen project: on a Mac, `brew install xcodegen`, then `xcodegen generate` in this folder, then open JARVIS.xcodeproj.
+# The Xcode project is generated from this file, so nothing here is a checked-in .xcodeproj to go stale.
+#
+#   brew install xcodegen
+#   cd JARVIS-iOS && xcodegen generate && open JARVIS.xcodeproj
+#
+# Then: target JARVIS › Signing & Capabilities › Team (your Apple ID). Cmd-R to run on the iPhone,
+# Cmd-U to run the crypto tests.
 name: JARVIS
 options:
   bundleIdPrefix: uk.jarvis
   deploymentTarget:
-    iOS: "26.0"
+    iOS: "18.0"
   createIntermediateGroups: true
+  groupSortPosition: top
 settings:
   base:
     SWIFT_VERSION: "5.0"
     TARGETED_DEVICE_FAMILY: "1"          # iPhone only
-    DEVELOPMENT_TEAM: ""                 # set your Apple ID team in Xcode › Signing & Capabilities
     CODE_SIGN_STYLE: Automatic
-    ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    DEVELOPMENT_TEAM: ""                 # left empty on purpose: choose your team in Xcode once
+    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
     ENABLE_USER_SCRIPT_SANDBOXING: YES
+    SWIFT_STRICT_CONCURRENCY: minimal    # this code is written for Swift 5 concurrency checking
 targets:
   JARVIS:
     type: application
     platform: iOS
     sources:
       - path: JARVIS
-    info:
-      path: JARVIS/Info.plist
+        excludes:
+          - "Info.plist"                 # named by INFOPLIST_FILE; never a bundle resource as well
     settings:
       base:
+        PRODUCT_NAME: JARVIS
         PRODUCT_BUNDLE_IDENTIFIER: uk.jarvis.phone
         INFOPLIST_FILE: JARVIS/Info.plist
         GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        ENABLE_PREVIEWS: YES
+  JARVISTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: JARVISTests
+    dependencies:
+      - target: JARVIS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: uk.jarvis.phone.tests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  JARVIS:
+    build:
+      targets:
+        JARVIS: all
+        JARVISTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - JARVISTests

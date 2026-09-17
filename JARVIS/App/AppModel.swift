@@ -79,6 +79,9 @@ final class AppModel: ObservableObject {
     let wake = WakeListener()
     let voice = Voice()
 
+    /// What the wake word is doing, mirrored here so the views watch this one object.
+    @Published private(set) var wakePhase: WakeListener.Phase = .off
+
     private var client: BridgeClient?
     private var reconnect: Task<Void, Never>?
     private var failures = 0
@@ -89,6 +92,7 @@ final class AppModel: ObservableObject {
         wake.onCommand = { [weak self] command in
             Task { await self?.ask(command, spoken: true) }
         }
+        wake.onPhase = { [weak self] phase in self?.wakePhase = phase }
         voice.onSpeaking = { [weak self] speaking in
             // JARVIS must not hear itself answering.
             self?.wake.paused = speaking
@@ -121,8 +125,7 @@ final class AppModel: ObservableObject {
         } catch {
             await client.close()
             link = .offline(error.localizedDescription)
-            if case BridgeError.authenticationFailed = error { return }
-            if case BridgeError.serverNotTrusted = error { return }
+            if (error as? BridgeError)?.needsPairingAgain == true { return }
             scheduleReconnect()
         }
     }

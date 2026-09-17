@@ -1,6 +1,14 @@
+import Combine
 import CryptoKit
 import Foundation
 import Network
+
+/// What JARVIS advertises itself as, and where it listens by default. Must match the PC's MobileBridge settings.
+enum JarvisService {
+    static let type = "_jarvis._tcp"
+    static let domain = "local."
+    static let defaultPort: UInt16 = 47823
+}
 
 /// The PC this phone is paired with: how to reach it and the key it must present. Kept in the Keychain.
 struct PairedPC: Codable, Equatable {
@@ -20,7 +28,7 @@ struct PairedPC: Codable, Equatable {
         if let host, !host.isEmpty, let port = NWEndpoint.Port(rawValue: port) {
             return .hostPort(host: NWEndpoint.Host(host), port: port)
         }
-        return .service(name: serviceName ?? "", type: PCBrowser.serviceType, domain: "local.", interface: nil)
+        return .service(name: serviceName ?? "", type: JarvisService.type, domain: JarvisService.domain, interface: nil)
     }
 
     private static let account = "paired-pc"
@@ -56,8 +64,6 @@ struct FoundPC: Identifiable, Hashable {
 /// Finds PCs running JARVIS with the iPhone bridge on. iOS asks the first time for Local Network access.
 @MainActor
 final class PCBrowser: ObservableObject {
-    static let serviceType = "_jarvis._tcp"
-
     @Published private(set) var found: [FoundPC] = []
     @Published private(set) var problem: String?
 
@@ -65,7 +71,7 @@ final class PCBrowser: ObservableObject {
 
     func start() {
         guard browser == nil else { return }
-        let browser = NWBrowser(for: .bonjour(type: Self.serviceType, domain: "local."), using: .tcp)
+        let browser = NWBrowser(for: .bonjour(type: JarvisService.type, domain: JarvisService.domain), using: .tcp)
         browser.browseResultsChangedHandler = { [weak self] results, _ in
             let pcs = results.compactMap { result -> FoundPC? in
                 if case let .service(name, _, _, _) = result.endpoint { return FoundPC(name: name, endpoint: result.endpoint) }

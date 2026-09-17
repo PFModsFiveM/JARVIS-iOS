@@ -23,6 +23,14 @@ enum BridgeError: LocalizedError {
     case pairingDeclined(String)
     case malformed
 
+    /// Reconnecting cannot help with these: the PC has to be paired with again.
+    var needsPairingAgain: Bool {
+        switch self {
+        case .authenticationFailed, .serverNotTrusted: return true
+        default: return false
+        }
+    }
+
     var errorDescription: String? {
         switch self {
         case .refused(let reason): return "The PC refused: \(reason)."
@@ -222,9 +230,7 @@ actor BridgeClient {
     private func handshake(mode: String, deviceId: String, pinned: Data?) async throws {
         let ephemeral = P256.KeyAgreement.PrivateKey()
         let clientEphemeral = ephemeral.publicKey.x963Representation
-        var clientNonce = Data(count: BridgeCrypto.nonceBytes)
-        let status = clientNonce.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, BridgeCrypto.nonceBytes, $0.baseAddress!) }
-        guard status == errSecSuccess else { throw BridgeError.malformed }
+        let clientNonce = SymmetricKey(size: .init(bitCount: BridgeCrypto.nonceBytes * 8)).withUnsafeBytes { Data($0) }
 
         let hello: [String: Any] = [
             "type": "client.hello", "protocol": BridgeCrypto.protocolVersion, "mode": mode, "deviceId": deviceId,

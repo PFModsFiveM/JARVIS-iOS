@@ -27,9 +27,11 @@ final class Alerts: NSObject, UNUserNotificationCenterDelegate {
             ? "A test challenge is up. Nothing will be locked."
             : "The Security Protocol has challenged them. If it's you, confirm with Face ID. If not, lock the PC."
         content.sound = .default
+        // Breaks through Focus only if the Time Sensitive Notifications capability is added in Xcode
+        // (it needs a paid developer account); without it iOS delivers this as an ordinary alert.
         content.interruptionLevel = .timeSensitive
         content.categoryIdentifier = challengeCategory
-        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "challenge", content: content, trigger: nil))
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "challenge", content: content, trigger: nil)) { _ in }
     }
 
     static func post(title: String, body: String) {
@@ -37,7 +39,7 @@ final class Alerts: NSObject, UNUserNotificationCenterDelegate {
         content.title = title
         content.body = body
         content.sound = .default
-        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)) { _ in }
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {

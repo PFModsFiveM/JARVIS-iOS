@@ -3,7 +3,6 @@ import SwiftUI
 /// The reactor, the link to the PC, the wake word, and the conversation.
 struct HomeView: View {
     @EnvironmentObject var model: AppModel
-    @ObservedObject private var wake = AppModel.shared.wake
     @State private var typed = ""
     @FocusState private var typing: Bool
 
@@ -27,7 +26,7 @@ struct HomeView: View {
     private var header: some View {
         VStack(spacing: 10) {
             HStack(alignment: .center, spacing: 16) {
-                Reactor(color: model.security?.isChallenge == true ? HUD.alert : linkColor, active: wake.running)
+                Reactor(color: model.security?.isChallenge == true ? HUD.alert : linkColor, active: model.wakePhase != .off)
                     .frame(width: 84, height: 84)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(model.pcName.uppercased())
@@ -70,7 +69,7 @@ struct HomeView: View {
     }
 
     private var wakeText: String {
-        switch wake.phase {
+        switch model.wakePhase {
         case .off: return "Off. Say \u{201C}Hey Siri, ask JARVIS\u{201D} any time."
         case .waiting: return "Listening on this iPhone, even when locked"
         case .hearing(let words): return words.isEmpty ? "Yes?" : words
@@ -100,7 +99,8 @@ struct HomeView: View {
                 .padding(16)
             }
             .onChange(of: model.lines.count) { _, _ in
-                withAnimation { proxy.scrollTo(model.lines.last?.id, anchor: .bottom) }
+                guard let last = model.lines.last?.id else { return }
+                withAnimation { proxy.scrollTo(last, anchor: .bottom) }
             }
             .onTapGesture {
                 typing = false

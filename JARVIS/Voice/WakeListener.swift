@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import Foundation
 import Speech
 
@@ -27,7 +28,12 @@ final class WakeListener: ObservableObject {
         }
     }
 
-    @Published private(set) var phase: Phase = .off
+    @Published private(set) var phase: Phase = .off {
+        didSet { if phase != oldValue { onPhase?(phase) } }
+    }
+
+    /// The model mirrors this, so views watch one object rather than two.
+    var onPhase: ((Phase) -> Void)?
 
     /// Set while JARVIS is speaking, so it never hears itself.
     var paused = false {
@@ -61,7 +67,7 @@ final class WakeListener: ObservableObject {
         guard let recognizer, recognizer.isAvailable, recognizer.supportsOnDeviceRecognition else { throw Failure.unavailable }
 
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .mixWithOthers, .allowBluetoothHFP])
+        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .mixWithOthers])
         try session.setActive(true)
 
         let input = engine.inputNode
@@ -93,7 +99,7 @@ final class WakeListener: ObservableObject {
 
     // MARK: recognition
 
-    private let bufferLock = NSLock()
+    nonisolated(unsafe) private let bufferLock = NSLock()
     nonisolated(unsafe) private var currentRequest: SFSpeechAudioBufferRecognitionRequest?
 
     nonisolated private func append(_ buffer: AVAudioPCMBuffer) {
@@ -192,7 +198,7 @@ final class WakeListener: ObservableObject {
     private func observe() {
         let center = NotificationCenter.default
         observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
-            let type = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt).flatMap(AVAudioSession.InterruptionType.init)
+            let type = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt).flatMap(AVAudioSession.InterruptionType.init(rawValue:))
             Task { @MainActor in
                 guard let self, self.running else { return }
                 if type == .ended {
