@@ -72,6 +72,9 @@ jobs:
         run: |
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/JARVIS.app Payload/
+          # The widget and Control Centre buttons ship inside the app; a build without them is not the app.
+          test -d Payload/JARVIS.app/PlugIns/JARVISWidgets.appex || { echo "The widget extension is missing from the app"; exit 1; }
+          ls Payload/JARVIS.app/PlugIns
           zip -qry JARVIS.ipa Payload
 
       - uses: actions/upload-artifact@v4
