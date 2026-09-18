@@ -14,6 +14,14 @@ struct SecurityView: View {
                     ChallengeBanner()
                 }
 
+                if let photo = model.challengePhoto {
+                    HUDFrame(title: "Who was at the PC", tint: HUD.alert) {
+                        Image(uiImage: photo).resizable().scaledToFit()
+                        Text("Taken by the PC's camera when the Security Protocol challenged them.")
+                            .font(.footnote).foregroundStyle(HUD.dim)
+                    }
+                }
+
                 HUDFrame(title: "Status", tint: tint) {
                     if let security = model.security {
                         Text(security.description.capitalizedFirst)

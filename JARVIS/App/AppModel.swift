@@ -107,6 +107,12 @@ final class AppModel: ObservableObject {
     @Published private(set) var screenFramesPerSecond = 0.0
     /// The phone has control of the PC's keyboard and mouse on this connection (Face ID once).
     @Published private(set) var controlling = false
+    /// The PC's sound is playing on the phone.
+    @Published private(set) var hearingPC = false
+    /// The last photo from the PC's camera, asked for or sent when the Security Protocol challenged someone.
+    @Published var cameraPhoto: UIImage?
+    @Published private(set) var challengePhoto: UIImage?
+    private let pcAudio = PCAudioPlayer()
     private var frameTimes: [Date] = []
     private var newestFrame = -1
     let network = NetworkWatch()
@@ -230,6 +236,7 @@ final class AppModel: ObservableObject {
         client = nil
         liveDisplay = nil
         controlling = false
+        if hearingPC { pcAudio.stop(); hearingPC = false }
         guard pc != nil else { return }
         link = .offline(error?.localizedDescription)
         scheduleReconnect()
@@ -473,6 +480,54 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: the PC's sound and camera
+
+    /// Face ID once per connection (the same grant as watching), then the PC's speakers play here.
+    func toggleSound() async {
+        if hearingPC {
+            hearingPC = false
+            pcAudio.stop()
+            _ = try? await client?.request("audio.stop")
+            return
+        }
+        do {
+            let client = try await session()
+            var reply = try await client.request("audio.start")
+            if reply.kind != "done" { reply = try await client.approvedRequest("audio.start", reason: "Hear your PC's sound") }
+            if reply.kind == "done" {
+                pcAudio.start(rate: 24000)
+                hearingPC = true
+            } else {
+                toast = reply.message
+            }
+        } catch {
+            toast = error.localizedDescription
+        }
+    }
+
+    func takeCameraPhoto() async {
+        do {
+            let client = try await session()
+            var reply = try await client.request("camera", timeout: 20)
+            if reply.kind == "failed", reply.message.contains("Face ID") {
+                reply = try await client.approvedRequest("camera", reason: "See through your PC's camera")
+            }
+            if reply.kind == "camera", let jpeg = reply.text("jpeg"), let data = Data(base64Encoded: jpeg) {
+                cameraPhoto = UIImage(data: data)
+            } else {
+                toast = reply.message
+            }
+        } catch {
+            toast = error.localizedDescription
+        }
+    }
+
+    private func receiveSecurityPhoto(_ message: BridgeMessage) {
+        guard let jpeg = message.text("jpeg"), let data = Data(base64Encoded: jpeg), let image = UIImage(data: data) else { return }
+        challengePhoto = image
+        Alerts.photo(title: "Who's at \(pcName)", body: "The Security Protocol has challenged them. This is what the PC's camera sees.", jpeg: data)
+    }
+
     // MARK: remote control
 
     /// Face ID once; the PC then takes this connection's clicks and keys until it disconnects.
@@ -546,6 +601,11 @@ final class AppModel: ObservableObject {
         if message.kind == "screen.frame" { receiveFrame(message); return }
         if message.kind == "file.data" { ControlModel.shared.receiveFileData(message); return }
         if message.kind == "notice" { receiveNotice(message); return }
+        if message.kind == "audio.frame" {
+            if hearingPC, let pcm = message.text("pcm").flatMap({ Data(base64Encoded: $0) }) { pcAudio.play(pcm) }
+            return
+        }
+        if message.kind == "security.photo" { receiveSecurityPhoto(message); return }
         if message.kind == "screen.ended" {
             liveDisplay = nil
             screenFramesPerSecond = 0

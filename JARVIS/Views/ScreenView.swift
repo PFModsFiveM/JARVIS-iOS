@@ -57,6 +57,23 @@ struct ScreenView: View {
         .onDisappear {
             if model.liveDisplay != nil { Task { await model.stopLive() } }
         }
+        .sheet(item: Binding(get: { model.cameraPhoto.map(CameraPhoto.init) }, set: { if $0 == nil { model.cameraPhoto = nil } })) { photo in
+            VStack(spacing: 12) {
+                HUDLabel(text: "PC camera", color: HUD.accent)
+                Image(uiImage: photo.image).resizable().scaledToFit()
+                HStack(spacing: 10) {
+                    Button("Again") { Task { await model.takeCameraPhoto() } }.buttonStyle(HUDButtonStyle())
+                    Button("Save") {
+                        UIImageWriteToSavedPhotosAlbum(photo.image, nil, nil, nil)
+                        model.toast = "Saved to Photos."
+                    }
+                    .buttonStyle(HUDButtonStyle())
+                }
+            }
+            .padding(16)
+            .presentationDetents([.medium, .large])
+            .background(HUD.background.ignoresSafeArea())
+        }
     }
 
     // MARK: header and buttons
@@ -89,6 +106,22 @@ struct ScreenView: View {
             }
             Button(sideways ? "Upright" : "Sideways") { withAnimation { sideways.toggle(); reset() } }
                 .buttonStyle(HUDButtonStyle())
+            Button {
+                Task { await model.toggleSound() }
+            } label: {
+                Image(systemName: model.hearingPC ? "speaker.wave.2.fill" : "speaker.slash").frame(maxWidth: 44)
+            }
+            .buttonStyle(HUDButtonStyle(tint: model.hearingPC ? HUD.good : HUD.accent))
+            .frame(width: 60)
+            .accessibilityLabel(model.hearingPC ? "Stop hearing the PC" : "Hear the PC")
+            Button {
+                Task { await model.takeCameraPhoto() }
+            } label: {
+                Image(systemName: "web.camera").frame(maxWidth: 44)
+            }
+            .buttonStyle(HUDButtonStyle())
+            .frame(width: 60)
+            .accessibilityLabel("Photo from the PC's camera")
             if let frame = model.screenFrame {
                 Button {
                     UIImageWriteToSavedPhotosAlbum(frame, nil, nil, nil)
@@ -299,4 +332,10 @@ struct ScreenView: View {
         zoom = 1; settledZoom = 1
         offset = .zero; settledOffset = .zero
     }
+}
+
+/// A camera photo, identified for the sheet.
+struct CameraPhoto: Identifiable {
+    let image: UIImage
+    var id: ObjectIdentifier { ObjectIdentifier(image) }
 }

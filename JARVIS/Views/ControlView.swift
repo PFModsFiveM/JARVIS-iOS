@@ -19,6 +19,9 @@ struct ControlView: View {
                 VStack(spacing: 14) {
                     mediaPanel
                     MacrosPanel()
+                    ProgressPanel()
+                    GamesPanel()
+                    ObsPanel()
                     statsPanel
                     appsPanel
                     transferPanel
@@ -67,7 +70,9 @@ struct ControlView: View {
         async let media: Void = control.refreshMedia()
         async let stats: Void = control.refreshStats()
         async let apps: Void = control.refreshApps()
-        _ = await (media, stats, apps)
+        async let progress: Void = LibraryModel.shared.refreshProgress()
+        async let obs: Void = LibraryModel.shared.refreshObs()
+        _ = await (media, stats, apps, progress, obs)
     }
 
     private static func stamp() -> String {

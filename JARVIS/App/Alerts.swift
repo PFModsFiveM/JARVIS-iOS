@@ -34,6 +34,21 @@ final class Alerts: NSObject, UNUserNotificationCenterDelegate {
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "challenge", content: content, trigger: nil)) { _ in }
     }
 
+    /// A notification with a picture - the challenge photo. The file is iOS's to keep once attached.
+    static func photo(title: String, body: String, jpeg: Data) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        content.interruptionLevel = .timeSensitive
+        content.categoryIdentifier = challengeCategory
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("challenge-\(UUID().uuidString).jpg")
+        if (try? jpeg.write(to: url)) != nil, let attachment = try? UNNotificationAttachment(identifier: "photo", url: url) {
+            content.attachments = [attachment]
+        }
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "challenge-photo", content: content, trigger: nil)) { _ in }
+    }
+
     static func post(title: String, body: String) {
         let content = UNMutableNotificationContent()
         content.title = title
