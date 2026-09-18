@@ -83,9 +83,14 @@ jobs:
           test -d Payload/JARVIS.app/PlugIns/JARVISWidgets.appex || { echo "The widget extension is missing from the app"; exit 1; }
           ls Payload/JARVIS.app/PlugIns
           zip -qry JARVIS.ipa Payload
+          # The same app without the widget extension, for installers that choke on extensions (free Apple IDs).
+          rm -rf Payload/JARVIS.app/PlugIns
+          zip -qry JARVIS-no-widget.ipa Payload
 
       - uses: actions/upload-artifact@v4
         with:
           name: JARVIS-unsigned-ipa
-          path: JARVIS.ipa
+          path: |
+            JARVIS.ipa
+            JARVIS-no-widget.ipa
           retention-days: 14
