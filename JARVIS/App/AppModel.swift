@@ -572,6 +572,23 @@ final class AppModel: ObservableObject {
         link = .unpaired
     }
 
+    /// From the widget or Control Centre: listen for one request without the wake word, and send it when the speaker
+    /// stops - the same as holding the button for as long as they talk.
+    func listenOnce() async {
+        await holdToTalk(true)
+        var quiet = 0
+        var heardSomething = false
+        for _ in 0..<40 {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard case .hearing(let words) = wakePhase else { return }
+            if !words.isEmpty { heardSomething = true }
+            quiet = wake.level < 0.08 ? quiet + 1 : 0
+            // About 1.5 s of quiet after some words, or 6 s of nothing at all.
+            if (heardSomething && quiet >= 6) || (!heardSomething && quiet >= 24) { break }
+        }
+        await holdToTalk(false)
+    }
+
     /// Hold to talk: the microphone listens while the button is down and asks JARVIS when it is let go.
     func holdToTalk(_ down: Bool) async {
         if down {

@@ -40,6 +40,24 @@ targets:
         SUPPORTS_MACCATALYST: NO
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
         ENABLE_PREVIEWS: YES
+    dependencies:
+      - target: JARVISWidgets
+        embed: true
+  JARVISWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: JARVISWidgets
+        excludes:
+          - "Info.plist"
+    settings:
+      base:
+        PRODUCT_NAME: JARVISWidgets
+        PRODUCT_BUNDLE_IDENTIFIER: uk.jarvis.phone.widgets
+        INFOPLIST_FILE: JARVISWidgets/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"
   JARVISTests:
     type: bundle.unit-test
     platform: iOS

@@ -29,23 +29,29 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
 struct RootView: View {
     @EnvironmentObject var model: AppModel
+    @State private var tab = "jarvis"
 
     var body: some View {
         Group {
             if model.pc == nil {
                 PairingView()
             } else {
-                TabView {
+                TabView(selection: $tab) {
                     HomeView()
                         .tabItem { Label("JARVIS", systemImage: "circle.hexagongrid") }
+                        .tag("jarvis")
                     ControlView()
                         .tabItem { Label("Control", systemImage: "slider.horizontal.3") }
-                    SecurityView()
-                        .tabItem { Label("Security", systemImage: "lock.shield") }
+                        .tag("control")
                     ScreenView()
                         .tabItem { Label("PC", systemImage: "display") }
+                        .tag("pc")
+                    SecurityView()
+                        .tabItem { Label("Security", systemImage: "lock.shield") }
+                        .tag("security")
                     SettingsView()
                         .tabItem { Label("Settings", systemImage: "gearshape") }
+                        .tag("settings")
                 }
                 .task {
                     await model.connect()
@@ -71,5 +77,28 @@ struct RootView: View {
             }
         }
         .animation(.easeOut, value: model.toast)
+        .onOpenURL { url in open(url) }
+    }
+
+    /// The widget, the lock screen and Control Centre open the app with a jarvis:// link saying what to do.
+    private func open(_ url: URL) {
+        guard url.scheme == "jarvis", model.pc != nil else { return }
+        switch url.host {
+        case "lock":
+            tab = "security"
+            Task { await model.connect(); await model.securityAction("lock") }
+        case "watch":
+            tab = "pc"
+        case "control":
+            tab = "control"
+        case "talk":
+            tab = "jarvis"
+            Task {
+                await model.connect()
+                await model.listenOnce()
+            }
+        default:
+            break
+        }
     }
 }

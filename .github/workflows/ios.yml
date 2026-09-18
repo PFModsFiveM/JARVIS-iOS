@@ -5,6 +5,9 @@
 #            Sideloadly (Windows) signs it with your Apple ID and installs it; free IDs re-sign every 7 days.
 #
 # Compile errors show in the run log; that is the whole point of the first few runs.
+#
+# The Xcode project is generated from project.yml on every run (XcodeGen), because the app now has a widget extension
+# and a target cannot be added to a checked-in project by hand without Xcode.
 name: iOS
 
 on:
@@ -17,6 +20,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+
+      - name: Generate the project
+        run: brew install xcodegen && xcodegen generate
 
       - name: Toolchain
         run: xcodebuild -version && xcrun simctl list runtimes
@@ -49,6 +55,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+
+      - name: Generate the project
+        run: brew install xcodegen && xcodegen generate
 
       - name: Build for iPhone (unsigned)
         run: |
