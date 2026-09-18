@@ -160,6 +160,36 @@ final class AppModel: ObservableObject {
     /// How the phone is reaching the PC right now: at home, or through the away-from-home address.
     @Published private(set) var route: String?
 
+    /// The last connection attempts, newest last - which route, how long, and how each ended. Shown in Settings so a
+    /// connection that will not come up can be seen rather than guessed at.
+    @Published private(set) var connectionLog: [String] = []
+
+    private func note(_ line: String) {
+        let stamp = Date().formatted(date: .omitted, time: .standard)
+        connectionLog = Array((connectionLog + ["\(stamp) \(line)"]).suffix(12))
+    }
+
+    /// Runs `operation`, but gives up after `seconds`: `cancel` then closes the connection, which ends whatever the
+    /// operation was waiting for. A connection that stalls on mobile data must not hold every later attempt forever.
+    private static func within<T: Sendable>(_ seconds: Double, cancel: @escaping @Sendable () async -> Void,
+                                            _ operation: @escaping @Sendable () async throws -> T) async throws -> T {
+        try await withThrowingTaskGroup(of: T?.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                await cancel()
+                return nil
+            }
+            while let result = try await group.next() {
+                if let value = result {
+                    group.cancelAll()
+                    return value
+                }
+            }
+            throw BridgeError.timedOut
+        }
+    }
+
     /// The connection attempt in flight, if any. Everything that needs the PC while one is running waits for it rather
     /// than starting its own: on mobile data several attempts at once used to replace each other, and each replaced one
     /// closing looked like the connection dropping.
@@ -195,8 +225,14 @@ final class AppModel: ObservableObject {
                 push: { message in Task { @MainActor in AppModel.shared.handlePush(message) } },
                 close: { error in Task { @MainActor in AppModel.shared.dropped(error, from: identity) } })
 
+            let started = Date()
+            note("\(route.name): connecting")
             do {
-                let name = try await client.resume(deviceId: pc.deviceId, pinnedServerKey: pc.serverKey)
+                let deviceId = pc.deviceId, serverKey = pc.serverKey
+                let name = try await Self.within(12, cancel: { await client.close() }) {
+                    try await client.resume(deviceId: deviceId, pinnedServerKey: serverKey)
+                }
+                note(String(format: "%@: online in %.1f s", route.name, Date().timeIntervalSince(started)))
                 self.client = client
                 failures = 0
                 ControlModel.shared.connectionChanged()
@@ -208,6 +244,7 @@ final class AppModel: ObservableObject {
             } catch {
                 await client.close()
                 lastError = error
+                note(String(format: "%@: %@ after %.1f s", route.name, error.localizedDescription, Date().timeIntervalSince(started)))
                 // A PC that no longer knows this phone will not know it by another route either.
                 if (error as? BridgeError)?.needsPairingAgain == true {
                     link = .offline(error.localizedDescription)

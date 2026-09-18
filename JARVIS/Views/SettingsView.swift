@@ -41,6 +41,14 @@ struct SettingsView: View {
                         Task { await model.disconnect(); await model.connect() }
                     }
                     .buttonStyle(HUDButtonStyle())
+                    if !model.connectionLog.isEmpty {
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(Array(model.connectionLog.enumerated()), id: \.offset) { _, line in
+                                Text(line).font(.system(size: 11, design: .monospaced)).foregroundStyle(HUD.dim)
+                            }
+                        }
+                        .textSelection(.enabled)
+                    }
                     Text("To use JARVIS on mobile data: install Tailscale on the PC and on this iPhone, sign in to the same account on both, and type the PC's Tailscale address here (it is shown in JARVIS › Settings › iPhone). Everything stays encrypted end to end as it is at home; Tailscale only carries it.")
                         .font(.footnote).foregroundStyle(HUD.dim)
                 }
