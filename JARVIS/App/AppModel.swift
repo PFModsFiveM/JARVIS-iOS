@@ -673,6 +673,32 @@ final class AppModel: ObservableObject {
         await holdToTalk(false)
     }
 
+    // MARK: alerts while the app is closed
+
+    /// The private ntfy topic the PC sends alerts to while this app is closed; nil when off.
+    @Published private(set) var alertsTopic: String? = UserDefaults.standard.string(forKey: "ntfyTopic")
+
+    /// Turns alerts-while-closed on with a fresh random topic (or off), on the PC and here.
+    func setAlerts(_ on: Bool) async {
+        let topic = on ? Self.newTopic() : ""
+        do {
+            let reply = try await session().request("alerts.set", ["topic": topic])
+            guard reply.kind == "done" else { toast = reply.message; return }
+            alertsTopic = on ? topic : nil
+            UserDefaults.standard.set(alertsTopic, forKey: "ntfyTopic")
+            toast = reply.message
+        } catch {
+            toast = error.localizedDescription
+        }
+    }
+
+    /// 128 bits of randomness in letters and digits: nobody can guess it, so nobody else can read or send to it.
+    private static func newTopic() -> String {
+        let alphabet = Array("abcdefghijklmnopqrstuvwxyz0123456789")
+        var generator = SystemRandomNumberGenerator()
+        return "jarvis-" + String((0..<26).map { _ in alphabet[Int(generator.next() % UInt64(alphabet.count))] })
+    }
+
     /// Hold to talk: the microphone listens while the button is down and asks JARVIS when it is let go.
     func holdToTalk(_ down: Bool) async {
         if down {

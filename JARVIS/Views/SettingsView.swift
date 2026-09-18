@@ -45,6 +45,29 @@ struct SettingsView: View {
                         .font(.footnote).foregroundStyle(HUD.dim)
                 }
 
+                HUDFrame(title: "Alerts when JARVIS is closed") {
+                    Toggle("Send alerts through ntfy", isOn: Binding(get: { model.alertsTopic != nil }, set: { on in Task { await model.setAlerts(on) } }))
+                        .tint(HUD.accent).foregroundStyle(HUD.text)
+                    if let topic = model.alertsTopic {
+                        HStack {
+                            Text(topic).font(.system(.footnote, design: .monospaced)).foregroundStyle(HUD.text).lineLimit(1).textSelection(.enabled)
+                            Spacer()
+                            Button("Copy") {
+                                UIPasteboard.general.string = topic
+                                model.toast = "Topic copied."
+                            }
+                            .font(.footnote)
+                        }
+                        Link("Get the ntfy app", destination: URL(string: "https://apps.apple.com/app/ntfy/id1625396347")!)
+                            .font(.footnote)
+                        Text("In ntfy, tap + and paste this topic (server ntfy.sh). Security challenges, reminders and JARVIS's announcements then arrive even with this app closed or away from home. Only the short alert text goes through ntfy - never photos, your screen or files. Turn this off and on again for a new topic.")
+                            .font(.footnote).foregroundStyle(HUD.dim)
+                    } else {
+                        Text("Off. JARVIS's alerts reach this iPhone only while the app is open (or listening in the background).")
+                            .font(.footnote).foregroundStyle(HUD.dim)
+                    }
+                }
+
                 HUDFrame(title: "Display") {
                     Picker("Centrepiece", selection: $model.centrepiece) {
                         ForEach(Centrepiece.allCases) { Text($0.label).tag($0) }
