@@ -6,6 +6,7 @@ struct HomeView: View {
     @State private var typed = ""
     @FocusState private var typing: Bool
     @State private var holding = false
+    @State private var showingAbilities = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -14,6 +15,7 @@ struct HomeView: View {
             inputBar
         }
         .background(HUD.background.ignoresSafeArea())
+        .sheet(isPresented: $showingAbilities) { CapabilitiesView() }
     }
 
     private var linkColor: Color {
@@ -98,6 +100,21 @@ struct HomeView: View {
                         Text("Ask anything you'd ask JARVIS at your desk - it runs on your PC and answers here.")
                             .foregroundStyle(HUD.dim)
                             .padding(.top, 30)
+                        SuggestionChips { suggestion in
+                            if suggestion.hasSuffix("…") {
+                                typed = String(suggestion.dropLast())
+                                typing = true
+                            } else {
+                                Task { await model.ask(suggestion) }
+                            }
+                        }
+                        Button {
+                            showingAbilities = true
+                        } label: {
+                            Label("What can JARVIS do?", systemImage: "list.bullet.rectangle")
+                                .font(.footnote).foregroundStyle(HUD.accent)
+                        }
+                        .padding(.top, 4)
                     }
                     ForEach(model.lines) { line in
                         Bubble(line: line).id(line.id)

@@ -12,6 +12,9 @@ struct ScreenView: View {
     @State private var settledOffset: CGSize = .zero
     @State private var sideways = false
     @State private var rightClick = false
+    /// Trackpad: drag moves the PC's pointer and a tap clicks where it is, rather than where the finger lands.
+    @State private var trackpad = UserDefaults.standard.bool(forKey: "trackpad")
+    @State private var lastDrag: CGSize = .zero
     @State private var typed = ""
     @State private var scrollCarry: CGFloat = 0
     @FocusState private var typing: Bool
@@ -60,7 +63,7 @@ struct ScreenView: View {
 
     private var header: some View {
         HStack {
-            HUDLabel(text: model.controlling ? "Remote control" : "Live view", color: model.controlling ? HUD.amber : HUD.accent)
+            HUDLabel(text: model.controlling ? (trackpad ? "Trackpad" : "Remote control") : "Live view", color: model.controlling ? HUD.amber : HUD.accent)
             Spacer()
             if model.liveDisplay != nil {
                 HUDLabel(text: model.network.cellular ? "Mobile data" : "Wi-Fi")
@@ -86,6 +89,18 @@ struct ScreenView: View {
             }
             Button(sideways ? "Upright" : "Sideways") { withAnimation { sideways.toggle(); reset() } }
                 .buttonStyle(HUDButtonStyle())
+            if let frame = model.screenFrame {
+                Button {
+                    UIImageWriteToSavedPhotosAlbum(frame, nil, nil, nil)
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    model.toast = "Saved to Photos."
+                } label: {
+                    Image(systemName: "camera").frame(maxWidth: 44)
+                }
+                .buttonStyle(HUDButtonStyle())
+                .frame(width: 60)
+                .accessibilityLabel("Save a snapshot to Photos")
+            }
         }
     }
 
@@ -109,16 +124,17 @@ struct ScreenView: View {
                     .opacity(model.liveDisplay == nil ? 0.4 : 1)
                     .contentShape(Rectangle())
                     .gesture(SpatialTapGesture().onEnded { tap in
-                        click(at: tap.location, in: container, image: image.size, clicks: 1)
+                        if model.controlling && trackpad { tapHere(clicks: 1) } else { click(at: tap.location, in: container, image: image.size, clicks: 1) }
                     })
                     .simultaneousGesture(SpatialTapGesture(count: 2).onEnded { tap in
                         if model.controlling {
-                            click(at: tap.location, in: container, image: image.size, clicks: 2)
+                            if trackpad { tapHere(clicks: 2) } else { click(at: tap.location, in: container, image: image.size, clicks: 2) }
                         } else {
                             withAnimation { reset() }
                         }
                     })
             }
+            .gesture(trackpadDrag, including: model.controlling && trackpad ? .all : .subviews)
             .gesture(
                 MagnifyGesture()
                     .onChanged { value in zoom = min(6, max(1, settledZoom * value.magnification)) }
@@ -157,6 +173,27 @@ struct ScreenView: View {
         let ny = y / shown.height + 0.5
         guard (0...1).contains(nx), (0...1).contains(ny) else { return nil }
         return CGPoint(x: nx, y: ny)
+    }
+
+    /// Finger travel to PC pixels: about 2.5 px per point, more for a quick swipe - a trackpad's acceleration.
+    private var trackpadDrag: some Gesture {
+        DragGesture(minimumDistance: 1)
+            .onChanged { value in
+                var step = CGSize(width: value.translation.width - lastDrag.width, height: value.translation.height - lastDrag.height)
+                lastDrag = value.translation
+                // The picture is turned a quarter clockwise when sideways; so is the finger's motion, undone here.
+                if sideways { step = CGSize(width: step.height, height: -step.width) }
+                let speed = (step.width * step.width + step.height * step.height).squareRoot()
+                let gain = 2.5 + min(speed / 6, 4)
+                model.moveBy(CGSize(width: step.width * gain, height: step.height * gain))
+            }
+            .onEnded { _ in lastDrag = .zero }
+    }
+
+    private func tapHere(clicks: Int) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        model.input("input.tap", ["button": rightClick ? "right" : "left", "clicks": clicks])
+        if rightClick { rightClick = false }
     }
 
     private func click(at location: CGPoint, in container: CGSize, image: CGSize, clicks: Int) {
@@ -215,6 +252,15 @@ struct ScreenView: View {
                 Button { sendTyped() } label: {
                     Image(systemName: "arrow.up").foregroundStyle(HUD.background).frame(width: 36, height: 36).background(HUD.amber)
                 }
+                Button {
+                    trackpad.toggle()
+                    UserDefaults.standard.set(trackpad, forKey: "trackpad")
+                } label: {
+                    Image(systemName: trackpad ? "rectangle.and.hand.point.up.left.filled" : "hand.point.up.left")
+                        .foregroundStyle(trackpad ? HUD.background : HUD.amber)
+                        .frame(width: 36, height: 36).background(trackpad ? HUD.amber : HUD.amber.opacity(0.1))
+                }
+                .accessibilityLabel(trackpad ? "Trackpad mode: on" : "Trackpad mode: off")
                 Button { rightClick.toggle() } label: {
                     Image(systemName: "cursorarrow.click.2").foregroundStyle(rightClick ? HUD.background : HUD.amber)
                         .frame(width: 36, height: 36).background(rightClick ? HUD.amber : HUD.amber.opacity(0.1))

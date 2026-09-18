@@ -15,7 +15,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    TARGETED_DEVICE_FAMILY: "1"          # iPhone only
+    TARGETED_DEVICE_FAMILY: "1,2"        # iPhone and iPad
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: ""                 # left empty on purpose: choose your team in Xcode once
     IPHONEOS_DEPLOYMENT_TARGET: "18.0"
@@ -29,6 +29,7 @@ targets:
       - path: JARVIS
         excludes:
           - "Info.plist"                 # named by INFOPLIST_FILE; never a bundle resource as well
+      - path: Shared                     # the Live Activity's attributes, also compiled into the widget
     settings:
       base:
         PRODUCT_NAME: JARVIS
@@ -50,6 +51,7 @@ targets:
       - path: JARVISWidgets
         excludes:
           - "Info.plist"
+      - path: Shared
     settings:
       base:
         PRODUCT_NAME: JARVISWidgets

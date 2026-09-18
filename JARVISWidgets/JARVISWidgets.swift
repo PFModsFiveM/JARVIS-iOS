@@ -1,3 +1,4 @@
+import ActivityKit
 import AppIntents
 import SwiftUI
 import WidgetKit
@@ -10,6 +11,7 @@ struct JARVISWidgets: WidgetBundle {
     var body: some Widget {
         QuickActionsWidget()
         LockScreenWidget()
+        JarvisLiveActivity()
         LockPCControl()
         WatchPCControl()
         TalkControl()
@@ -142,5 +144,114 @@ struct TalkControl: ControlWidget {
         }
         .displayName("Talk to JARVIS")
         .description("Opens JARVIS listening.")
+    }
+}
+
+// MARK: - Live Activity and the Dynamic Island
+
+/// What JARVIS is doing right now, on the lock screen and in the Dynamic Island: a power countdown with Cancel, a
+/// transfer's progress, live view or control with Stop, or JARVIS listening, thinking and answering.
+struct JarvisLiveActivity: Widget {
+    var body: some WidgetConfiguration {
+        ActivityConfiguration(for: JarvisActivityAttributes.self) { context in
+            LiveActivityBanner(state: context.state, pc: context.attributes.pcName)
+                .padding(14)
+                .activityBackgroundTint(ground)
+                .activitySystemActionForegroundColor(cyan)
+        } dynamicIsland: { context in
+            let state = context.state
+            return DynamicIsland {
+                DynamicIslandExpandedRegion(.leading) {
+                    Image(systemName: state.symbol).font(.title2).foregroundStyle(tint(state))
+                }
+                DynamicIslandExpandedRegion(.trailing) {
+                    if let ends = state.endsAt {
+                        Text(timerInterval: Date()...max(Date(), ends), countsDown: true)
+                            .font(.system(.title3, design: .monospaced)).foregroundStyle(tint(state))
+                            .frame(maxWidth: 64)
+                    } else if let progress = state.progress {
+                        Text("\(Int(progress * 100))%").font(.system(.title3, design: .monospaced)).foregroundStyle(cyan)
+                    }
+                }
+                DynamicIslandExpandedRegion(.center) {
+                    Text(state.title).font(.headline).lineLimit(1)
+                }
+                DynamicIslandExpandedRegion(.bottom) {
+                    VStack(spacing: 8) {
+                        if !state.detail.isEmpty {
+                            Text(state.detail).font(.subheadline).foregroundStyle(.secondary).lineLimit(3)
+                        }
+                        if let progress = state.progress {
+                            ProgressView(value: progress).tint(cyan)
+                        }
+                        if let action = state.action {
+                            Link(destination: action) {
+                                Text(state.actionTitle).font(.system(.body, design: .monospaced).weight(.bold))
+                                    .frame(maxWidth: .infinity).padding(.vertical, 6)
+                                    .background(tint(state).opacity(0.25)).clipShape(Capsule())
+                            }
+                        }
+                    }
+                }
+            } compactLeading: {
+                Image(systemName: state.symbol).foregroundStyle(tint(state))
+            } compactTrailing: {
+                if let ends = state.endsAt {
+                    Text(timerInterval: Date()...max(Date(), ends), countsDown: true)
+                        .monospacedDigit().frame(maxWidth: 40).foregroundStyle(tint(state))
+                } else if let progress = state.progress {
+                    Text("\(Int(progress * 100))%").monospacedDigit().foregroundStyle(cyan)
+                } else {
+                    Text("JARVIS").font(.caption2.weight(.heavy)).foregroundStyle(cyan)
+                }
+            } minimal: {
+                Image(systemName: state.symbol).foregroundStyle(tint(state))
+            }
+            .widgetURL(URL(string: "jarvis://open"))
+            .keylineTint(tint(state))
+        }
+    }
+}
+
+private func tint(_ state: JarvisActivityAttributes.ContentState) -> Color {
+    switch state.mode {
+    case .power: return Color(red: 1.0, green: 0.35, blue: 0.3)
+    case .controlling: return Color(red: 1.0, green: 0.72, blue: 0.2)
+    default: return cyan
+    }
+}
+
+struct LiveActivityBanner: View {
+    let state: JarvisActivityAttributes.ContentState
+    let pc: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: state.symbol).font(.title2).foregroundStyle(tint(state))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(state.title).font(.headline).foregroundStyle(.white).lineLimit(1)
+                    Text(pc).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if let ends = state.endsAt {
+                    Text(timerInterval: Date()...max(Date(), ends), countsDown: true)
+                        .font(.system(.title2, design: .monospaced)).foregroundStyle(tint(state)).frame(maxWidth: 80)
+                }
+            }
+            if !state.detail.isEmpty {
+                Text(state.detail).font(.subheadline).foregroundStyle(.white.opacity(0.85)).lineLimit(3)
+            }
+            if let progress = state.progress {
+                ProgressView(value: progress).tint(cyan)
+            }
+            if let action = state.action {
+                Link(destination: action) {
+                    Text(state.actionTitle).font(.system(.body, design: .monospaced).weight(.bold)).foregroundStyle(tint(state))
+                        .frame(maxWidth: .infinity).padding(.vertical, 8)
+                        .background(tint(state).opacity(0.18)).clipShape(Capsule())
+                }
+            }
+        }
     }
 }

@@ -54,6 +54,7 @@ struct RootView: View {
                         .tag("settings")
                 }
                 .task {
+                    LiveActivity.shared.start()
                     await model.connect()
                     if model.wakeWordOn { await model.setWakeWord(true) }
                 }
@@ -78,6 +79,12 @@ struct RootView: View {
         }
         .animation(.easeOut, value: model.toast)
         .onOpenURL { url in open(url) }
+        .onChange(of: model.pendingLink) { _, link in
+            // Siri and Shortcuts hand the app a link to act on once it is open.
+            guard let link else { return }
+            model.pendingLink = nil
+            open(link)
+        }
     }
 
     /// The widget, the lock screen and Control Centre open the app with a jarvis:// link saying what to do.
@@ -91,6 +98,30 @@ struct RootView: View {
             tab = "pc"
         case "control":
             tab = "control"
+        case "cancelpower":
+            Task { await ControlModel.shared.power("cancel") }
+        case "stopwatch":
+            tab = "pc"
+            model.releaseControl()
+            Task { await model.stopLive() }
+        case "power":
+            // From Siri: "restart my PC" confirmed there, Face ID here.
+            let action = url.lastPathComponent
+            if ["sleep", "restart", "shutdown"].contains(action) {
+                tab = "control"
+                Task { await model.connect(); await ControlModel.shared.power(action) }
+            }
+        case "macro":
+            let name = url.lastPathComponent.removingPercentEncoding ?? url.lastPathComponent
+            if let macro = MacroStore.shared.macro(named: name) {
+                tab = "control"
+                Task {
+                    await model.connect()
+                    if let client = try? await model.session() {
+                        model.toast = (try? await MacroRunner.run(macro, on: client)) ?? "\(macro.name) didn't finish."
+                    }
+                }
+            }
         case "talk":
             tab = "jarvis"
             Task {

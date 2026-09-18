@@ -2,8 +2,8 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The PC from the phone: what's playing and the volume, how it's running, what's open, power, the FiveM server, the
-/// clipboard and files. Refreshes itself every few seconds while on screen.
+/// The PC from the phone: what's playing and the volume, how it's running, what's open, power, the clipboard and
+/// files. Refreshes itself every few seconds while on screen.
 struct ControlView: View {
     @EnvironmentObject var model: AppModel
     @StateObject private var control = ControlModel.shared
@@ -18,9 +18,9 @@ struct ControlView: View {
             ScrollView {
                 VStack(spacing: 14) {
                     mediaPanel
+                    MacrosPanel()
                     statsPanel
                     appsPanel
-                    fivemPanel
                     transferPanel
                     powerPanel
                 }
@@ -67,8 +67,7 @@ struct ControlView: View {
         async let media: Void = control.refreshMedia()
         async let stats: Void = control.refreshStats()
         async let apps: Void = control.refreshApps()
-        async let fivem: Void = control.refreshFiveM()
-        _ = await (media, stats, apps, fivem)
+        _ = await (media, stats, apps)
     }
 
     private static func stamp() -> String {
@@ -185,7 +184,7 @@ struct ControlView: View {
     private var appsPanel: some View {
         HUDFrame(title: "Apps and games") {
             HStack(spacing: 8) {
-                TextField("Open… (Spotify, GTA V, FiveM)", text: $openName)
+                TextField("Open… (Spotify, Steam, Blender)", text: $openName)
                     .foregroundStyle(HUD.text)
                     .padding(9)
                     .background(HUD.background)
@@ -230,25 +229,6 @@ struct ControlView: View {
         let name = openName
         openName = ""
         Task { await control.open(name) }
-    }
-
-    // MARK: FiveM
-
-    private var fivemPanel: some View {
-        HUDFrame(title: "FiveM server", tint: control.fivem.running ? HUD.good : HUD.dim) {
-            if control.fivem.running {
-                HStack {
-                    Text(control.fivem.name ?? "Running").foregroundStyle(HUD.text).lineLimit(1)
-                    Spacer()
-                    Text("\(control.fivem.players) / \(control.fivem.maxPlayers)").font(.system(.body, design: .monospaced)).foregroundStyle(HUD.good)
-                }
-                if !control.fivem.playerNames.isEmpty {
-                    Text(control.fivem.playerNames.joined(separator: " · ")).font(.footnote).foregroundStyle(HUD.dim)
-                }
-            } else {
-                Text("Not running on this PC.").foregroundStyle(HUD.dim)
-            }
-        }
     }
 
     // MARK: clipboard and files

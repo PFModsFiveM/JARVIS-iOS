@@ -88,6 +88,8 @@ final class AppModel: ObservableObject {
         didSet { UserDefaults.standard.set(facialState, forKey: "facialState") }
     }
     @Published private(set) var speaking = false
+    /// A jarvis:// link from Siri or Shortcuts for the root view to act on once the app is on screen.
+    @Published var pendingLink: URL?
     @Published private(set) var awaitingVoice = false
 
     /// Live view: the PC's displays, the one being watched, and its latest frame.
@@ -276,6 +278,7 @@ final class AppModel: ObservableObject {
             let reply = try await session().request("ask", ["text": request], timeout: 90)
             let answer = reply.kind == "answer" ? (reply.text("text") ?? "") : reply.message
             lines.append(ChatLine(speaker: reply.kind == "answer" ? .jarvis : .system, text: answer))
+            LiveActivity.shared.answer = answer
             if speakAnswers || spoken {
                 if usePCVoice, reply.kind == "answer", reply.body["voice"] as? Bool == true {
                     expectVoice(for: reply.id, fallback: answer)
@@ -495,6 +498,27 @@ final class AppModel: ObservableObject {
         Task {
             guard let client = try? await session() else { return }
             if let reply = try? await client.request(kind, payload), reply.kind == "failed" { toast = reply.message }
+        }
+    }
+
+    // MARK: trackpad
+
+    private var pendingMove = CGSize.zero
+    private var moveFlush: Task<Void, Never>?
+
+    /// Trackpad movement, coalesced: finger motion arrives many times a frame, the PC hears at most ~30 moves a second.
+    func moveBy(_ delta: CGSize) {
+        guard controlling else { return }
+        pendingMove.width += delta.width
+        pendingMove.height += delta.height
+        guard moveFlush == nil else { return }
+        moveFlush = Task {
+            try? await Task.sleep(nanoseconds: 33_000_000)
+            let move = pendingMove
+            pendingMove = .zero
+            moveFlush = nil
+            let dx = Int(move.width.rounded()), dy = Int(move.height.rounded())
+            if dx != 0 || dy != 0 { input("input.moveBy", ["dx": dx, "dy": dy]) }
         }
     }
 

@@ -2,8 +2,7 @@ import Foundation
 import SwiftUI
 import UIKit
 
-/// The PC's controls as the phone sees them: media, volume, stats, apps, power, the FiveM server, the clipboard and
-/// files both ways. Requests go over the same encrypted connection as everything else (`AppModel.session()`).
+/// The PC's controls as the phone sees them: media, volume, stats, apps, power, the clipboard and files both ways. Requests go over the same encrypted connection as everything else (`AppModel.session()`).
 @MainActor
 final class ControlModel: ObservableObject {
     static let shared = ControlModel()
@@ -46,14 +45,6 @@ final class ControlModel: ObservableObject {
         var id: Int { pid }
     }
 
-    struct FiveM: Equatable {
-        var running = false
-        var name: String?
-        var players = 0
-        var maxPlayers = 0
-        var playerNames: [String] = []
-    }
-
     struct FileEntry: Identifiable, Equatable, Hashable {
         let name: String
         let path: String
@@ -65,7 +56,6 @@ final class ControlModel: ObservableObject {
     @Published private(set) var media = Media()
     @Published private(set) var stats = Stats()
     @Published private(set) var apps: [App] = []
-    @Published private(set) var fivem = FiveM()
     @Published private(set) var pcClipboard: String?
     @Published private(set) var transfer: (name: String, progress: Double)?
     @Published var downloaded: URL?
@@ -121,7 +111,7 @@ final class ControlModel: ObservableObject {
         await call("volume", ["muted": media.muted])
     }
 
-    // MARK: stats, FiveM
+    // MARK: stats
 
     func refreshStats() async {
         guard let reply = await call("stats"), reply.kind == "stats" else { return }
@@ -132,13 +122,6 @@ final class ControlModel: ObservableObject {
                       uptimeHours: number(b["uptimeHours"]) ?? 0, processes: Int(number(b["processes"]) ?? 0),
                       game: b["game"] as? String,
                       drives: (b["drives"] as? [[String: Any]] ?? []).map { ($0["name"] as? String ?? "?", number($0["freeGb"]) ?? 0, number($0["totalGb"]) ?? 0) })
-    }
-
-    func refreshFiveM() async {
-        guard let reply = await call("fivem"), reply.kind == "fivem" else { return }
-        let b = reply.body
-        fivem = FiveM(running: b["running"] as? Bool ?? false, name: b["name"] as? String, players: Int(number(b["players"]) ?? 0),
-                      maxPlayers: Int(number(b["maxPlayers"]) ?? 0), playerNames: b["playerNames"] as? [String] ?? [])
     }
 
     // MARK: apps
@@ -176,6 +159,14 @@ final class ControlModel: ObservableObject {
                 : try await client.approvedRequest("power", reason: "\(action == "shutdown" ? "Shut down" : action.capitalized) your PC", ["action": action])
             model.toast = reply.message
             UINotificationFeedbackGenerator().notificationOccurred(reply.kind == "done" ? .success : .warning)
+            if reply.kind == "done" {
+                switch action {
+                case "restart": LiveActivity.shared.powerStarted("Restarting", seconds: 15)
+                case "shutdown": LiveActivity.shared.powerStarted("Shutting down", seconds: 15)
+                case "cancel": LiveActivity.shared.powerCancelled()
+                default: break
+                }
+            }
         } catch {
             model.toast = error.localizedDescription
         }
