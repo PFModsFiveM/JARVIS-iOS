@@ -4,6 +4,7 @@ struct SettingsView: View {
     @EnvironmentObject var model: AppModel
     @State private var confirmForget = false
     @State private var selfTest: [(name: String, passed: Bool)] = []
+    @State private var remoteHost = AppModel.shared.pc?.remoteHost ?? ""
 
     var body: some View {
         ScrollView {
@@ -18,6 +19,30 @@ struct SettingsView: View {
                         .font(.footnote).foregroundStyle(HUD.dim)
                     Button("Reconnect") { Task { await model.disconnect(); await model.connect() } }
                         .buttonStyle(HUDButtonStyle())
+                }
+
+                HUDFrame(title: "Away from home") {
+                    HStack {
+                        HUDLabel(text: "Connected")
+                        Spacer()
+                        Text(model.route ?? "-").font(.system(.body, design: .monospaced)).foregroundStyle(HUD.text)
+                    }
+                    TextField("PC's Tailscale address (100.x.y.z)", text: $remoteHost)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                        .foregroundStyle(HUD.text)
+                        .padding(9)
+                        .background(HUD.background)
+                        .overlay(Rectangle().stroke(HUD.accent.opacity(0.4), lineWidth: 1))
+                        .onSubmit { model.setRemoteHost(remoteHost) }
+                    Button("Save") {
+                        model.setRemoteHost(remoteHost)
+                        Task { await model.disconnect(); await model.connect() }
+                    }
+                    .buttonStyle(HUDButtonStyle())
+                    Text("To use JARVIS on mobile data: install Tailscale on the PC and on this iPhone, sign in to the same account on both, and type the PC's Tailscale address here (it is shown in JARVIS › Settings › iPhone). Everything stays encrypted end to end as it is at home; Tailscale only carries it.")
+                        .font(.footnote).foregroundStyle(HUD.dim)
                 }
 
                 HUDFrame(title: "Display") {

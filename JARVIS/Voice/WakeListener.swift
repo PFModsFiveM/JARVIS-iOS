@@ -195,7 +195,64 @@ final class WakeListener: ObservableObject {
         }
     }
 
+    // MARK: hold to talk
+
+    private var holding = false
+    private var startedForHold = false
+    private var holdCommitted = ""
+    private var holdTranscript = ""
+
+    /// Everything said while the button is held is the request - no "Jarvis" needed. Starts the microphone for the
+    /// hold if the wake word is off, and stops it again afterwards.
+    func beginHold() async throws {
+        if !running {
+            try await start()
+            startedForHold = true
+        }
+        paused = false
+        silence?.invalidate()
+        holding = true
+        holdCommitted = ""
+        holdTranscript = ""
+        beginTask()
+        phase = .hearing("")
+    }
+
+    /// The button is up: the last words get a moment to arrive, then the request goes.
+    func endHold() {
+        guard holding else { return }
+        Timer.scheduledTimer(withTimeInterval: 0.7, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.holding else { return }
+                let command = (self.holdCommitted + self.holdTranscript).trimmingCharacters(in: .whitespacesAndNewlines)
+                self.holding = false
+                self.holdCommitted = ""
+                self.holdTranscript = ""
+                if self.startedForHold {
+                    self.startedForHold = false
+                    self.stop()
+                } else {
+                    self.phase = .waiting
+                    self.beginTask()
+                }
+                if !command.isEmpty { self.onCommand?(command) }
+            }
+        }
+    }
+
     private func heard(_ transcript: String, final: Bool) {
+        if holding {
+            // A final result ends that recognition task; what it heard is kept and the next task carries on.
+            if final {
+                holdCommitted += transcript + " "
+                holdTranscript = ""
+            } else {
+                holdTranscript = transcript
+            }
+            phase = .hearing(holdCommitted + holdTranscript)
+            return
+        }
+
         let lower = transcript.lowercased()
         guard let wake = wakeWords.compactMap({ lower.range(of: $0, options: .backwards) }).max(by: { $0.lowerBound < $1.lowerBound }) else {
             return

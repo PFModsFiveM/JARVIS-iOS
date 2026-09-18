@@ -5,6 +5,7 @@ struct HomeView: View {
     @EnvironmentObject var model: AppModel
     @State private var typed = ""
     @FocusState private var typing: Bool
+    @State private var holding = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -133,6 +134,24 @@ struct HomeView: View {
                 .overlay(Rectangle().stroke(HUD.accent.opacity(0.4), lineWidth: 1))
                 .submitLabel(.send)
                 .onSubmit(send)
+            // Hold to talk: press, speak, let go.
+            Image(systemName: holding ? "waveform" : "mic.fill")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(holding ? HUD.background : HUD.accent)
+                .frame(width: 42, height: 42)
+                .background(holding ? HUD.accent : HUD.accent.opacity(0.12))
+                .overlay(Rectangle().stroke(HUD.accent.opacity(0.5), lineWidth: 1))
+                .gesture(DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        guard !holding else { return }
+                        holding = true
+                        Task { await model.holdToTalk(true) }
+                    }
+                    .onEnded { _ in
+                        holding = false
+                        Task { await model.holdToTalk(false) }
+                    })
+                .accessibilityLabel("Hold to talk")
             Button(action: send) {
                 Image(systemName: "arrow.up")
                     .font(.system(size: 17, weight: .bold))

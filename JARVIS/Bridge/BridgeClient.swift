@@ -198,26 +198,52 @@ actor BridgeClient {
 
     // MARK: the handshake
 
+    /// Resumes a continuation once, whichever of the state handler or the timeout gets there first. A class, so the
+    /// two callbacks share it without capturing a mutable variable.
+    private final class Once: @unchecked Sendable {
+        private let lock = NSLock()
+        private var done = false
+
+        func claim() -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            if done { return false }
+            done = true
+            return true
+        }
+    }
+
     private func open() async throws {
+        let connection = self.connection
+        let queue = self.queue
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            var resumed = false
+            let once = Once()
             connection.stateUpdateHandler = { [weak self] state in
                 switch state {
                 case .ready:
-                    if !resumed { resumed = true; continuation.resume() }
+                    if once.claim() { continuation.resume() }
                 case .failed(let error):
-                    if !resumed { resumed = true; continuation.resume(throwing: error) }
+                    if once.claim() { continuation.resume(throwing: error) }
                     Task { await self?.closedByNetwork(error) }
                 case .waiting(let error):
                     // No route yet (Wi-Fi off, PC asleep): give up rather than wait forever.
-                    if !resumed { resumed = true; continuation.resume(throwing: error) }
+                    if once.claim() { continuation.resume(throwing: error) }
                 case .cancelled:
-                    if !resumed { resumed = true; continuation.resume(throwing: BridgeError.closed) }
+                    if once.claim() { continuation.resume(throwing: BridgeError.closed) }
                 default:
                     break
                 }
             }
             connection.start(queue: queue)
+
+            // An address that is not reachable from here (home Wi-Fi's, from mobile data) never fails outright - the
+            // connection just waits. Five seconds is plenty on a LAN or Tailscale; after that, try the next route.
+            queue.asyncAfter(deadline: .now() + 5) {
+                if once.claim() {
+                    continuation.resume(throwing: BridgeError.timedOut)
+                    connection.cancel()
+                }
+            }
         }
     }
 

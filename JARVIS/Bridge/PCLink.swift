@@ -19,6 +19,9 @@ struct PairedPC: Codable, Equatable {
     /// An address typed by hand, used first when present.
     var host: String?
     var port: UInt16
+    /// Where the PC is reachable away from home - its Tailscale address (100.x.y.z) or name. Tried after the home
+    /// address, or first on mobile data. Nil until set in Settings.
+    var remoteHost: String?
 
     var fingerprint: String {
         Data(SHA256Hash.of(serverKey).prefix(4)).hex
@@ -29,6 +32,12 @@ struct PairedPC: Codable, Equatable {
             return .hostPort(host: NWEndpoint.Host(host), port: port)
         }
         return .service(name: serviceName ?? "", type: JarvisService.type, domain: JarvisService.domain, interface: nil)
+    }
+
+    /// The PC away from home, when an address for it has been set.
+    var remoteEndpoint: NWEndpoint? {
+        guard let remoteHost, !remoteHost.isEmpty, let port = NWEndpoint.Port(rawValue: port) else { return nil }
+        return .hostPort(host: NWEndpoint.Host(remoteHost), port: port)
     }
 
     private static let account = "paired-pc"

@@ -103,7 +103,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var liveDisplay: Int?
     @Published private(set) var screenFrame: UIImage?
     @Published private(set) var screenFramesPerSecond = 0.0
+    /// The phone has control of the PC's keyboard and mouse on this connection (Face ID once).
+    @Published private(set) var controlling = false
     private var frameTimes: [Date] = []
+    private var newestFrame = -1
+    let network = NetworkWatch()
 
     let wake = WakeListener()
     let voice = Voice()
@@ -145,29 +149,60 @@ final class AppModel: ObservableObject {
 
     // MARK: connection
 
+    /// How the phone is reaching the PC right now: at home, or through the away-from-home address.
+    @Published private(set) var route: String?
+
+    /// Home first, then away-from-home - or the other way round on mobile data, where the home address cannot answer.
     func connect() async {
         guard let pc else { link = .unpaired; return }
         if let client, await client.isOpen, link.isOnline { return }
 
         link = .connecting
-        let client = BridgeClient(endpoint: pc.endpoint)
-        await client.setHandlers(
-            push: { message in Task { @MainActor in AppModel.shared.handlePush(message) } },
-            close: { error in Task { @MainActor in AppModel.shared.dropped(error) } })
-
-        do {
-            let name = try await client.resume(deviceId: pc.deviceId, pinnedServerKey: pc.serverKey)
-            self.client = client
-            failures = 0
-            ControlModel.shared.connectionChanged()
-            link = .online(name)
-            await refresh()
-        } catch {
-            await client.close()
-            link = .offline(error.localizedDescription)
-            if (error as? BridgeError)?.needsPairingAgain == true { return }
-            scheduleReconnect()
+        var routes: [(name: String, endpoint: NWEndpoint)] = [("Home network", pc.endpoint)]
+        if let remote = pc.remoteEndpoint {
+            if network.cellular { routes.insert(("Away from home", remote), at: 0) } else { routes.append(("Away from home", remote)) }
         }
+
+        var lastError: Error = BridgeError.closed
+        for route in routes {
+            let client = BridgeClient(endpoint: route.endpoint)
+            await client.setHandlers(
+                push: { message in Task { @MainActor in AppModel.shared.handlePush(message) } },
+                close: { error in Task { @MainActor in AppModel.shared.dropped(error) } })
+
+            do {
+                let name = try await client.resume(deviceId: pc.deviceId, pinnedServerKey: pc.serverKey)
+                self.client = client
+                failures = 0
+                ControlModel.shared.connectionChanged()
+                controlling = false
+                self.route = route.name
+                link = .online(name)
+                await refresh()
+                return
+            } catch {
+                await client.close()
+                lastError = error
+                // A PC that no longer knows this phone will not know it by another route either.
+                if (error as? BridgeError)?.needsPairingAgain == true {
+                    link = .offline(error.localizedDescription)
+                    return
+                }
+            }
+        }
+
+        route = nil
+        link = .offline(lastError.localizedDescription)
+        scheduleReconnect()
+    }
+
+    /// Saves the PC's away-from-home address (Tailscale), or clears it with an empty string.
+    func setRemoteHost(_ host: String) {
+        guard var paired = pc else { return }
+        let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        paired.remoteHost = trimmed.isEmpty ? nil : trimmed
+        paired.save()
+        pc = paired
     }
 
     func disconnect() async {
@@ -192,6 +227,7 @@ final class AppModel: ObservableObject {
     private func dropped(_ error: Error?) {
         client = nil
         liveDisplay = nil
+        controlling = false
         guard pc != nil else { return }
         link = .offline(error?.localizedDescription)
         scheduleReconnect()
@@ -389,14 +425,16 @@ final class AppModel: ObservableObject {
         do {
             // Face ID once per connection: after the first approval the PC lets this connection switch displays freely.
             let client = try await session()
-            var reply = try await client.request("screen.start", ["display": display])
+            let body: [String: Any] = ["display": display, "network": network.cellular ? "cellular" : "wifi"]
+            var reply = try await client.request("screen.start", body)
             if reply.kind != "done" {
-                reply = try await client.approvedRequest("screen.start", reason: "Watch your PC's screen", ["display": display])
+                reply = try await client.approvedRequest("screen.start", reason: "Watch your PC's screen", body)
             }
             if reply.kind == "done" {
                 if liveDisplay != display { screenFrame = nil }
                 liveDisplay = display
                 frameTimes = []
+                newestFrame = -1
             } else {
                 toast = reply.message
             }
@@ -411,13 +449,59 @@ final class AppModel: ObservableObject {
         _ = try? await client?.request("screen.stop")
     }
 
+    /// Decoded off the main thread, so a 20-frame-a-second stream never makes the app stutter; a frame that finishes
+    /// decoding after a newer one is dropped.
     private func receiveFrame(_ message: BridgeMessage) {
         guard let display = (message.body["display"] as? NSNumber)?.intValue, display == liveDisplay,
-              let jpeg = message.text("jpeg"), let data = Data(base64Encoded: jpeg), let image = UIImage(data: data) else { return }
-        screenFrame = image
-        let now = Date()
-        frameTimes = frameTimes.filter { now.timeIntervalSince($0) < 2 } + [now]
-        screenFramesPerSecond = Double(frameTimes.count) / 2
+              let sequence = (message.body["sequence"] as? NSNumber)?.intValue,
+              let jpeg = message.text("jpeg"), let data = Data(base64Encoded: jpeg) else { return }
+
+        Task.detached(priority: .userInitiated) {
+            guard let image = UIImage(data: data)?.preparingForDisplay() else { return }
+            await MainActor.run {
+                let model = AppModel.shared
+                guard model.liveDisplay == display, sequence > model.newestFrame || sequence == 0 else { return }
+                model.newestFrame = sequence
+                model.screenFrame = image
+                let now = Date()
+                model.frameTimes = model.frameTimes.filter { now.timeIntervalSince($0) < 2 } + [now]
+                model.screenFramesPerSecond = Double(model.frameTimes.count) / 2
+            }
+        }
+    }
+
+    // MARK: remote control
+
+    /// Face ID once; the PC then takes this connection's clicks and keys until it disconnects.
+    func takeControl() async {
+        do {
+            let reply = try await session().approvedRequest("control.start", reason: "Control your PC from this iPhone")
+            controlling = reply.kind == "done"
+            if !controlling { toast = reply.message }
+            UINotificationFeedbackGenerator().notificationOccurred(controlling ? .success : .warning)
+        } catch {
+            toast = error.localizedDescription
+        }
+    }
+
+    func releaseControl() { controlling = false }
+
+    /// Clicks, keys and scrolls are sent without waiting for one another's answers, so the pointer keeps up with the
+    /// finger; a refusal still comes back as a toast.
+    func input(_ kind: String, _ body: [String: Any]) {
+        guard controlling else { return }
+        var payload = body
+        if payload["display"] == nil, let display = liveDisplay { payload["display"] = display }
+        Task {
+            guard let client = try? await session() else { return }
+            if let reply = try? await client.request(kind, payload), reply.kind == "failed" { toast = reply.message }
+        }
+    }
+
+    /// The network changed under a running stream: restart it with the right quality for the new one.
+    func networkChanged() {
+        guard let display = liveDisplay else { return }
+        Task { await startLive(display) }
     }
 
     /// Something JARVIS said on its own - a reminder, a finished task, a question. In the conversation while the app
@@ -486,6 +570,21 @@ final class AppModel: ObservableObject {
         status = [:]
         security = nil
         link = .unpaired
+    }
+
+    /// Hold to talk: the microphone listens while the button is down and asks JARVIS when it is let go.
+    func holdToTalk(_ down: Bool) async {
+        if down {
+            voice.stop()
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            do {
+                try await wake.beginHold()
+            } catch {
+                toast = error.localizedDescription
+            }
+        } else {
+            wake.endHold()
+        }
     }
 
     func setWakeWord(_ on: Bool) async {
