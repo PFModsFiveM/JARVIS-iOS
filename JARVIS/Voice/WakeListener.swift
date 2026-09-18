@@ -23,7 +23,7 @@ final class WakeListener: ObservableObject {
             switch self {
             case .speechDenied: return "Speech recognition is off for JARVIS. Turn it on in Settings › JARVIS."
             case .microphoneDenied: return "The microphone is off for JARVIS. Turn it on in Settings › JARVIS."
-            case .unavailable: return "On-device speech recognition isn't available for this language on this iPhone."
+            case .unavailable: return "This iPhone has no on-device English speech model yet. Turn on Siri or Dictation in English (Settings › Keyboard › Dictation), let it download over Wi-Fi, then try again."
             }
         }
     }
@@ -47,7 +47,22 @@ final class WakeListener: ObservableObject {
     var running: Bool { phase != .off }
 
     private let wakeWords = ["jarvis", "jarvus", "jervis"]
-    private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-GB")) ?? SFSpeechRecognizer()
+    private var recognizer: SFSpeechRecognizer?
+
+    /// The first English recognizer that can run on this iPhone without the network. en-GB was fixed before,
+    /// and a phone without the British model then had no wake word at all even with another English one installed.
+    private static func onDeviceRecognizer() -> SFSpeechRecognizer? {
+        var identifiers = ["en-GB", Locale.current.identifier, "en-US"]
+        identifiers += SFSpeechRecognizer.supportedLocales().map(\.identifier).filter { $0.hasPrefix("en") }.sorted()
+        var tried = Set<String>()
+        for identifier in identifiers where tried.insert(identifier).inserted {
+            if let candidate = SFSpeechRecognizer(locale: Locale(identifier: identifier)),
+               candidate.isAvailable, candidate.supportsOnDeviceRecognition {
+                return candidate
+            }
+        }
+        return nil
+    }
     private let engine = AVAudioEngine()
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
@@ -64,7 +79,8 @@ final class WakeListener: ObservableObject {
         }
         guard speech == .authorized else { throw Failure.speechDenied }
         guard await AVAudioApplication.requestRecordPermission() else { throw Failure.microphoneDenied }
-        guard let recognizer, recognizer.isAvailable, recognizer.supportsOnDeviceRecognition else { throw Failure.unavailable }
+        guard let chosen = Self.onDeviceRecognizer() else { throw Failure.unavailable }
+        recognizer = chosen
 
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .mixWithOthers])
