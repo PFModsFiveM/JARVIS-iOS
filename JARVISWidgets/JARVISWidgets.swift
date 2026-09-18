@@ -162,12 +162,12 @@ struct JarvisLiveActivity: Widget {
             let state = context.state
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Image(systemName: state.symbol).font(.title2).foregroundStyle(tint(state))
+                    Image(systemName: state.symbol).font(.title2).foregroundStyle(activityTint(state))
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     if let ends = state.endsAt {
                         Text(timerInterval: Date()...max(Date(), ends), countsDown: true)
-                            .font(.system(.title3, design: .monospaced)).foregroundStyle(tint(state))
+                            .font(.system(.title3, design: .monospaced)).foregroundStyle(activityTint(state))
                             .frame(maxWidth: 64)
                     } else if let progress = state.progress {
                         Text("\(Int(progress * 100))%").font(.system(.title3, design: .monospaced)).foregroundStyle(cyan)
@@ -188,32 +188,32 @@ struct JarvisLiveActivity: Widget {
                             Link(destination: action) {
                                 Text(state.actionTitle).font(.system(.body, design: .monospaced).weight(.bold))
                                     .frame(maxWidth: .infinity).padding(.vertical, 6)
-                                    .background(tint(state).opacity(0.25)).clipShape(Capsule())
+                                    .background(activityTint(state).opacity(0.25)).clipShape(Capsule())
                             }
                         }
                     }
                 }
             } compactLeading: {
-                Image(systemName: state.symbol).foregroundStyle(tint(state))
+                Image(systemName: state.symbol).foregroundStyle(activityTint(state))
             } compactTrailing: {
                 if let ends = state.endsAt {
                     Text(timerInterval: Date()...max(Date(), ends), countsDown: true)
-                        .monospacedDigit().frame(maxWidth: 40).foregroundStyle(tint(state))
+                        .monospacedDigit().frame(maxWidth: 40).foregroundStyle(activityTint(state))
                 } else if let progress = state.progress {
                     Text("\(Int(progress * 100))%").monospacedDigit().foregroundStyle(cyan)
                 } else {
                     Text("JARVIS").font(.caption2.weight(.heavy)).foregroundStyle(cyan)
                 }
             } minimal: {
-                Image(systemName: state.symbol).foregroundStyle(tint(state))
+                Image(systemName: state.symbol).foregroundStyle(activityTint(state))
             }
             .widgetURL(URL(string: "jarvis://open"))
-            .keylineTint(tint(state))
+            .keylineTint(activityTint(state))
         }
     }
 }
 
-private func tint(_ state: JarvisActivityAttributes.ContentState) -> Color {
+private func activityTint(_ state: JarvisActivityAttributes.ContentState) -> Color {
     switch state.mode {
     case .power: return Color(red: 1.0, green: 0.35, blue: 0.3)
     case .controlling: return Color(red: 1.0, green: 0.72, blue: 0.2)
@@ -228,7 +228,7 @@ struct LiveActivityBanner: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
-                Image(systemName: state.symbol).font(.title2).foregroundStyle(tint(state))
+                Image(systemName: state.symbol).font(.title2).foregroundStyle(activityTint(state))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(state.title).font(.headline).foregroundStyle(.white).lineLimit(1)
                     Text(pc).font(.caption).foregroundStyle(.secondary)
@@ -236,7 +236,7 @@ struct LiveActivityBanner: View {
                 Spacer()
                 if let ends = state.endsAt {
                     Text(timerInterval: Date()...max(Date(), ends), countsDown: true)
-                        .font(.system(.title2, design: .monospaced)).foregroundStyle(tint(state)).frame(maxWidth: 80)
+                        .font(.system(.title2, design: .monospaced)).foregroundStyle(activityTint(state)).frame(maxWidth: 80)
                 }
             }
             if !state.detail.isEmpty {
@@ -247,9 +247,9 @@ struct LiveActivityBanner: View {
             }
             if let action = state.action {
                 Link(destination: action) {
-                    Text(state.actionTitle).font(.system(.body, design: .monospaced).weight(.bold)).foregroundStyle(tint(state))
+                    Text(state.actionTitle).font(.system(.body, design: .monospaced).weight(.bold)).foregroundStyle(activityTint(state))
                         .frame(maxWidth: .infinity).padding(.vertical, 8)
-                        .background(tint(state).opacity(0.18)).clipShape(Capsule())
+                        .background(activityTint(state).opacity(0.18)).clipShape(Capsule())
                 }
             }
         }
