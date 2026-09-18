@@ -38,6 +38,8 @@ struct RootView: View {
                 TabView {
                     HomeView()
                         .tabItem { Label("JARVIS", systemImage: "circle.hexagongrid") }
+                    ControlView()
+                        .tabItem { Label("Control", systemImage: "slider.horizontal.3") }
                     SecurityView()
                         .tabItem { Label("Security", systemImage: "lock.shield") }
                     ScreenView()

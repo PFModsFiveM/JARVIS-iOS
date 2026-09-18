@@ -159,6 +159,7 @@ final class AppModel: ObservableObject {
             let name = try await client.resume(deviceId: pc.deviceId, pinnedServerKey: pc.serverKey)
             self.client = client
             failures = 0
+            ControlModel.shared.connectionChanged()
             link = .online(name)
             await refresh()
         } catch {
@@ -208,7 +209,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func session() async throws -> BridgeClient {
+    func session() async throws -> BridgeClient {
         if let client, await client.isOpen { return client }
         await connect()
         guard let client else { throw BridgeError.closed }
@@ -386,7 +387,12 @@ final class AppModel: ObservableObject {
     /// Face ID, then the PC starts sending the display. Watching only: nothing here reaches the PC's keyboard or mouse.
     func startLive(_ display: Int) async {
         do {
-            let reply = try await session().approvedRequest("screen.start", reason: "Watch your PC's screen", ["display": display])
+            // Face ID once per connection: after the first approval the PC lets this connection switch displays freely.
+            let client = try await session()
+            var reply = try await client.request("screen.start", ["display": display])
+            if reply.kind != "done" {
+                reply = try await client.approvedRequest("screen.start", reason: "Watch your PC's screen", ["display": display])
+            }
             if reply.kind == "done" {
                 if liveDisplay != display { screenFrame = nil }
                 liveDisplay = display
@@ -414,9 +420,24 @@ final class AppModel: ObservableObject {
         screenFramesPerSecond = Double(frameTimes.count) / 2
     }
 
+    /// Something JARVIS said on its own - a reminder, a finished task, a question. In the conversation while the app
+    /// is open; as a notification while it runs in the background.
+    private func receiveNotice(_ message: BridgeMessage) {
+        guard let text = message.text("text"), !text.isEmpty else { return }
+        let title = message.text("title") ?? "JARVIS"
+        lines.append(ChatLine(speaker: .jarvis, text: text))
+        if foreground {
+            toast = "\(title): \(text)"
+        } else {
+            Alerts.post(title: title, body: text)
+        }
+    }
+
     private func handlePush(_ message: BridgeMessage) {
         if message.kind == "voice" { receiveVoice(message); return }
         if message.kind == "screen.frame" { receiveFrame(message); return }
+        if message.kind == "file.data" { ControlModel.shared.receiveFileData(message); return }
+        if message.kind == "notice" { receiveNotice(message); return }
         if message.kind == "screen.ended" {
             liveDisplay = nil
             screenFramesPerSecond = 0
