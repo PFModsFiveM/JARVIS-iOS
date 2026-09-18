@@ -25,9 +25,22 @@ struct HomeView: View {
 
     private var header: some View {
         VStack(spacing: 10) {
+            if model.centrepiece != .none {
+                // Tap to switch between the circle and the face, as "show the face" does on the PC.
+                CentrepieceView(kind: model.centrepiece, state: model.visualState,
+                                level: { model.centreLevel() }, mouth: { model.centreMouth() },
+                                facialState: model.facialState)
+                    .frame(height: 230)
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
+                    .onTapGesture { model.centrepiece = model.centrepiece == .circle ? .face : .circle }
+                    .accessibilityLabel(model.centrepiece == .circle ? "JARVIS circle. Tap for the face." : "JARVIS face. Tap for the circle.")
+            }
             HStack(alignment: .center, spacing: 16) {
-                Reactor(color: model.security?.isChallenge == true ? HUD.alert : linkColor, active: model.wakePhase != .off)
-                    .frame(width: 84, height: 84)
+                if model.centrepiece == .none {
+                    Reactor(color: model.security?.isChallenge == true ? HUD.alert : linkColor, active: model.wakePhase != .off)
+                        .frame(width: 84, height: 84)
+                }
                 VStack(alignment: .leading, spacing: 4) {
                     Text(model.pcName.uppercased())
                         .font(.system(size: 18, weight: .bold, design: .monospaced))

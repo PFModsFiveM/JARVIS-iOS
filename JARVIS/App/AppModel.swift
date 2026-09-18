@@ -75,6 +75,35 @@ final class AppModel: ObservableObject {
     @Published private(set) var wakeWordOn = UserDefaults.standard.bool(forKey: "wakeWordOn") {
         didSet { UserDefaults.standard.set(wakeWordOn, forKey: "wakeWordOn") }
     }
+    /// Answers in JARVIS's own voice, rendered on the PC. Off reads them out in the phone's voice.
+    @Published var usePCVoice = UserDefaults.standard.object(forKey: "usePCVoice") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(usePCVoice, forKey: "usePCVoice") }
+    }
+    /// The circle, the face, or neither, at the top of the home screen.
+    @Published var centrepiece = Centrepiece(rawValue: UserDefaults.standard.string(forKey: "centrepiece") ?? "") ?? .circle {
+        didSet { UserDefaults.standard.set(centrepiece.rawValue, forKey: "centrepiece") }
+    }
+    /// The face looks away to think, meets your eyes while listening, sleeps offline. Off holds it neutral; the lips still move.
+    @Published var facialState = UserDefaults.standard.object(forKey: "facialState") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(facialState, forKey: "facialState") }
+    }
+    @Published private(set) var speaking = false
+    @Published private(set) var awaitingVoice = false
+
+    /// Live view: the PC's displays, the one being watched, and its latest frame.
+    struct ScreenDisplayInfo: Identifiable, Equatable {
+        let index: Int
+        let name: String
+        let width: Int
+        let height: Int
+        let primary: Bool
+        var id: Int { index }
+    }
+    @Published private(set) var screenDisplays: [ScreenDisplayInfo] = []
+    @Published private(set) var liveDisplay: Int?
+    @Published private(set) var screenFrame: UIImage?
+    @Published private(set) var screenFramesPerSecond = 0.0
+    private var frameTimes: [Date] = []
 
     let wake = WakeListener()
     let voice = Voice()
@@ -84,6 +113,15 @@ final class AppModel: ObservableObject {
 
     private var client: BridgeClient?
     private var reconnect: Task<Void, Never>?
+
+    /// JARVIS's voice for an answer, arriving in parts after the words. Count 0 means the PC could not render it.
+    private struct VoiceParts {
+        var count: Int
+        var parts: [Int: Data] = [:]
+        var mouth: [Float] = []
+    }
+    private var voiceParts: [String: VoiceParts] = [:]
+    private var voiceWait: (id: String, text: String, timeout: Task<Void, Never>)?
     private var failures = 0
     private var foreground = true
 
@@ -96,6 +134,7 @@ final class AppModel: ObservableObject {
         voice.onSpeaking = { [weak self] speaking in
             // JARVIS must not hear itself answering.
             self?.wake.paused = speaking
+            self?.speaking = speaking
         }
     }
 
@@ -139,6 +178,8 @@ final class AppModel: ObservableObject {
 
     func scenePhaseChanged(_ phase: ScenePhase) {
         foreground = phase == .active
+        // Nobody is looking at the screen from a pocket.
+        if phase != .active, liveDisplay != nil { Task { await stopLive() } }
         if phase == .active {
             Task { await connect() }
         } else if phase == .background && !wake.running {
@@ -149,6 +190,7 @@ final class AppModel: ObservableObject {
 
     private func dropped(_ error: Error?) {
         client = nil
+        liveDisplay = nil
         guard pc != nil else { return }
         link = .offline(error?.localizedDescription)
         scheduleReconnect()
@@ -189,11 +231,21 @@ final class AppModel: ObservableObject {
         thinking = true
         defer { thinking = false }
 
+        // A new question makes whatever was still coming for the last one stale.
+        cancelVoiceWait()
+        voice.stop()
+
         do {
             let reply = try await session().request("ask", ["text": request], timeout: 90)
             let answer = reply.kind == "answer" ? (reply.text("text") ?? "") : reply.message
             lines.append(ChatLine(speaker: reply.kind == "answer" ? .jarvis : .system, text: answer))
-            if speakAnswers || spoken { voice.say(answer) }
+            if speakAnswers || spoken {
+                if usePCVoice, reply.kind == "answer", reply.body["voice"] as? Bool == true {
+                    expectVoice(for: reply.id, fallback: answer)
+                } else {
+                    voice.say(answer)
+                }
+            }
         } catch {
             lines.append(ChatLine(speaker: .system, text: error.localizedDescription))
         }
@@ -233,7 +285,144 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: JARVIS's voice
+
+    /// The words are in; the voice follows as "voice" pushes. Wait a little for it, then read the words out instead.
+    private func expectVoice(for id: String, fallback: String) {
+        cancelVoiceWait()
+        if let arrived = voiceParts[id], arrived.count == 0 {
+            voiceParts[id] = nil
+            voice.say(fallback)
+            return
+        }
+        let timeout = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 20_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.voiceUnavailable(id)
+        }
+        voiceWait = (id, fallback, timeout)
+        awaitingVoice = true
+        playVoiceIfComplete(id)
+    }
+
+    private func receiveVoice(_ message: BridgeMessage) {
+        guard let id = message.text("for") else { return }
+        let count = (message.body["count"] as? NSNumber)?.intValue ?? 0
+        let index = (message.body["index"] as? NSNumber)?.intValue ?? -1
+
+        guard count > 0, index >= 0, index < count, let audio = message.text("audio"), let data = Data(base64Encoded: audio) else {
+            voiceParts[id] = VoiceParts(count: 0)
+            voiceUnavailable(id)
+            return
+        }
+
+        // Only the answer being waited for, or one whose words have not arrived yet, is worth keeping.
+        let waiting = voiceWait?.id
+        voiceParts = voiceParts.filter { $0.key == id || $0.key == waiting }
+        var entry = voiceParts[id] ?? VoiceParts(count: count)
+        entry.parts[index] = data
+        if let mouth = message.body["mouth"] as? [NSNumber] { entry.mouth = mouth.map { $0.floatValue } }
+        voiceParts[id] = entry
+        playVoiceIfComplete(id)
+    }
+
+    private func playVoiceIfComplete(_ id: String) {
+        guard let wait = voiceWait, wait.id == id, let entry = voiceParts[id], entry.count > 0, entry.parts.count == entry.count else { return }
+        var wav = Data()
+        for index in 0..<entry.count {
+            guard let part = entry.parts[index] else { return }
+            wav.append(part)
+        }
+        voiceParts[id] = nil
+        cancelVoiceWait()
+        if !voice.play(wav: wav, mouth: entry.mouth) { voice.say(wait.text) }
+    }
+
+    private func voiceUnavailable(_ id: String) {
+        guard let wait = voiceWait, wait.id == id else { return }
+        voiceParts[id] = nil
+        cancelVoiceWait()
+        voice.say(wait.text)
+    }
+
+    private func cancelVoiceWait() {
+        voiceWait?.timeout.cancel()
+        voiceWait = nil
+        awaitingVoice = false
+    }
+
+    // MARK: what the circle and the face show
+
+    var visualState: JarvisVisualState {
+        if security?.isChallenge == true { return .securityAlert }
+        if speaking { return .speaking }
+        if !link.isOnline { return .offline }
+        if thinking || awaitingVoice { return .thinking }
+        if case .hearing = wakePhase { return .listening }
+        return .idle
+    }
+
+    /// 0-1: JARVIS's voice while it speaks, the microphone while it listens.
+    func centreLevel() -> Float {
+        if speaking { return voice.level }
+        if case .hearing = wakePhase { return wake.level }
+        return 0
+    }
+
+    func centreMouth() -> [MouthFrame]? { voice.takeMouth() }
+
+    // MARK: live view
+
+    func loadDisplays() async {
+        guard let reply = try? await session().request("screen.displays"), reply.kind == "screen.displays",
+              let list = reply.body["displays"] as? [[String: Any]] else { return }
+        screenDisplays = list.map { d in
+            ScreenDisplayInfo(index: (d["index"] as? NSNumber)?.intValue ?? 0, name: d["name"] as? String ?? "Display",
+                              width: (d["width"] as? NSNumber)?.intValue ?? 0, height: (d["height"] as? NSNumber)?.intValue ?? 0,
+                              primary: d["primary"] as? Bool ?? false)
+        }
+    }
+
+    /// Face ID, then the PC starts sending the display. Watching only: nothing here reaches the PC's keyboard or mouse.
+    func startLive(_ display: Int) async {
+        do {
+            let reply = try await session().approvedRequest("screen.start", reason: "Watch your PC's screen", ["display": display])
+            if reply.kind == "done" {
+                if liveDisplay != display { screenFrame = nil }
+                liveDisplay = display
+                frameTimes = []
+            } else {
+                toast = reply.message
+            }
+        } catch {
+            toast = error.localizedDescription
+        }
+    }
+
+    func stopLive() async {
+        liveDisplay = nil
+        screenFramesPerSecond = 0
+        _ = try? await client?.request("screen.stop")
+    }
+
+    private func receiveFrame(_ message: BridgeMessage) {
+        guard let display = (message.body["display"] as? NSNumber)?.intValue, display == liveDisplay,
+              let jpeg = message.text("jpeg"), let data = Data(base64Encoded: jpeg), let image = UIImage(data: data) else { return }
+        screenFrame = image
+        let now = Date()
+        frameTimes = frameTimes.filter { now.timeIntervalSince($0) < 2 } + [now]
+        screenFramesPerSecond = Double(frameTimes.count) / 2
+    }
+
     private func handlePush(_ message: BridgeMessage) {
+        if message.kind == "voice" { receiveVoice(message); return }
+        if message.kind == "screen.frame" { receiveFrame(message); return }
+        if message.kind == "screen.ended" {
+            liveDisplay = nil
+            screenFramesPerSecond = 0
+            toast = message.text("reason") ?? "Live view ended."
+            return
+        }
         guard message.kind == "security.event" else { return }
         let before = security
         if let snapshot = SecuritySnapshot(message.object("security")) { security = snapshot }

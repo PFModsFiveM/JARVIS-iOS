@@ -40,6 +40,8 @@ struct RootView: View {
                         .tabItem { Label("JARVIS", systemImage: "circle.hexagongrid") }
                     SecurityView()
                         .tabItem { Label("Security", systemImage: "lock.shield") }
+                    ScreenView()
+                        .tabItem { Label("PC", systemImage: "display") }
                     SettingsView()
                         .tabItem { Label("Settings", systemImage: "gearshape") }
                 }

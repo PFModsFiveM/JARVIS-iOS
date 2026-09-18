@@ -20,9 +20,24 @@ struct SettingsView: View {
                         .buttonStyle(HUDButtonStyle())
                 }
 
+                HUDFrame(title: "Display") {
+                    Picker("Centrepiece", selection: $model.centrepiece) {
+                        ForEach(Centrepiece.allCases) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    Toggle("Facial expressions", isOn: $model.facialState)
+                        .tint(HUD.accent).foregroundStyle(HUD.text)
+                    Text("The circle and the face both follow what JARVIS is doing: listening, thinking, speaking, and red for a security challenge. Tap it on the home screen to switch. With expressions off the face stays neutral but its lips still move.")
+                        .font(.footnote).foregroundStyle(HUD.dim)
+                }
+
                 HUDFrame(title: "Voice") {
                     Toggle("Speak answers", isOn: $model.speakAnswers)
                         .tint(HUD.accent).foregroundStyle(HUD.text)
+                    Toggle("JARVIS's own voice", isOn: $model.usePCVoice)
+                        .tint(HUD.accent).foregroundStyle(HUD.text)
+                    Text("Answers are spoken in the same voice as on your PC, sent from it with each answer. Off, or if it doesn't arrive, the iPhone reads them out itself.")
+                        .font(.footnote).foregroundStyle(HUD.dim)
                     Text("Wake word: on-device recognition only; nothing is sent until you say \u{201C}Jarvis\u{201D} and a request. For the best voice, download an English (UK) Enhanced or Premium voice in iOS Settings › Accessibility › Spoken Content › Voices.")
                         .font(.footnote).foregroundStyle(HUD.dim)
                 }

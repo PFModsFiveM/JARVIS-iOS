@@ -118,9 +118,27 @@ final class WakeListener: ObservableObject {
     nonisolated(unsafe) private let bufferLock = NSLock()
     nonisolated(unsafe) private var currentRequest: SFSpeechAudioBufferRecognitionRequest?
 
+    nonisolated(unsafe) private var heardLevel: Float = 0
+
+    /// How loud the microphone is, 0-1, for the circle and the face while they listen. Never sent anywhere.
+    nonisolated var level: Float {
+        bufferLock.lock()
+        defer { bufferLock.unlock() }
+        return heardLevel
+    }
+
     nonisolated private func append(_ buffer: AVAudioPCMBuffer) {
+        var loudness: Float = 0
+        if let samples = buffer.floatChannelData?[0], buffer.frameLength > 0 {
+            var sum: Float = 0
+            for i in 0..<Int(buffer.frameLength) { sum += samples[i] * samples[i] }
+            // Speech sits around 0.02-0.15 RMS on the phone's microphone; six times that fills the scale.
+            loudness = min(1, (sum / Float(buffer.frameLength)).squareRoot() * 6)
+        }
+
         bufferLock.lock()
         let request = currentRequest
+        heardLevel = loudness
         bufferLock.unlock()
         request?.append(buffer)
     }
