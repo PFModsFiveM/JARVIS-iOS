@@ -160,8 +160,24 @@ final class AppModel: ObservableObject {
     /// How the phone is reaching the PC right now: at home, or through the away-from-home address.
     @Published private(set) var route: String?
 
-    /// Home first, then away-from-home - or the other way round on mobile data, where the home address cannot answer.
+    /// The connection attempt in flight, if any. Everything that needs the PC while one is running waits for it rather
+    /// than starting its own: on mobile data several attempts at once used to replace each other, and each replaced one
+    /// closing looked like the connection dropping.
+    private var connecting: Task<Void, Never>?
+
     func connect() async {
+        if let connecting {
+            await connecting.value
+            return
+        }
+        let attempt = Task { await self.connectNow() }
+        connecting = attempt
+        await attempt.value
+        connecting = nil
+    }
+
+    /// Home first, then away-from-home - or the other way round on mobile data, where the home address cannot answer.
+    private func connectNow() async {
         guard let pc else { link = .unpaired; return }
         if let client, await client.isOpen, link.isOnline { return }
 
@@ -174,9 +190,10 @@ final class AppModel: ObservableObject {
         var lastError: Error = BridgeError.closed
         for route in routes {
             let client = BridgeClient(endpoint: route.endpoint)
+            let identity = ObjectIdentifier(client)
             await client.setHandlers(
                 push: { message in Task { @MainActor in AppModel.shared.handlePush(message) } },
-                close: { error in Task { @MainActor in AppModel.shared.dropped(error) } })
+                close: { error in Task { @MainActor in AppModel.shared.dropped(error, from: identity) } })
 
             do {
                 let name = try await client.resume(deviceId: pc.deviceId, pinnedServerKey: pc.serverKey)
@@ -232,8 +249,11 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func dropped(_ error: Error?) {
-        client = nil
+    /// A connection closed. Only the one in use counts: an attempt that lost a race, or one already replaced, closing
+    /// is not the PC going away.
+    private func dropped(_ error: Error?, from identity: ObjectIdentifier) {
+        guard let client, ObjectIdentifier(client) == identity else { return }
+        self.client = nil
         liveDisplay = nil
         controlling = false
         if hearingPC { pcAudio.stop(); hearingPC = false }
