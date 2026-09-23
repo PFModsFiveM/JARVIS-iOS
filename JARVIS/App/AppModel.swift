@@ -117,6 +117,13 @@ final class AppModel: ObservableObject {
     private var newestFrame = -1
     let network = NetworkWatch()
 
+    /// Bonjour, kept running while the app is open rather than only on the pairing screen.
+    ///
+    /// Seeing the PC on this network is proof the phone is at home, which is better evidence than
+    /// any guess from the interface type - and it is the one candidate that still works when every
+    /// address the PC has has changed. It costs nothing when there is nothing to find.
+    let browser = PCBrowser()
+
     let wake = WakeListener()
     let voice = Voice()
 
@@ -153,6 +160,248 @@ final class AppModel: ObservableObject {
     var pcName: String {
         if case .online(let name) = link { return name }
         return (status["machine"] as? String) ?? pc?.serviceName ?? pc?.host ?? "PC"
+    }
+
+    // MARK: the PC, awake or asleep
+
+    /// What the PC page shows. Every state a person would recognise, including the ones where the
+    /// bridge cannot possibly be up - because a PC that is asleep is the case this whole thing
+    /// exists for, and an app that can only say "offline" then is an app with a dead page in it.
+    enum DeviceState: Equatable {
+        /// Not reachable, and nothing set up to wake it.
+        case offline(String?)
+        /// Not reachable, and this phone can send a wake request from where it is.
+        case wakeAvailable
+        /// The button has been pressed; the packets have not left yet.
+        case wakeRequested
+        /// The packets left. Nothing has answered yet, and nothing claims the PC is awake.
+        case waking(sent: String, seconds: Int)
+        /// Something is answering; the handshake is running.
+        case bridgeConnecting
+        case online(String)
+        /// The wake request went out and the PC never appeared.
+        case wakeTimedOut(String)
+        case connectionFailed(String)
+        case unpaired
+
+        var headline: String {
+            switch self {
+            case .offline, .wakeAvailable: return "OFFLINE"
+            case .wakeRequested, .waking: return "WAKING..."
+            case .bridgeConnecting: return "CONNECTING"
+            case .online: return "ONLINE"
+            case .wakeTimedOut: return "NO ANSWER"
+            case .connectionFailed: return "OFFLINE"
+            case .unpaired: return "NOT PAIRED"
+            }
+        }
+
+        /// What the state says under the headline. Never a claim that the PC is awake.
+        var detail: String {
+            switch self {
+            case .offline(let why): return why ?? "JARVIS isn't answering."
+            case .wakeAvailable: return "JARVIS isn't answering. It can be woken from here."
+            case .wakeRequested: return "Sending the wake request..."
+            case .waking(let sent, let seconds):
+                return seconds > 0 ? "Wake request sent to \(sent)\nWaiting for JARVIS... \(seconds)s" : "Wake request sent to \(sent)\nWaiting for JARVIS..."
+            case .bridgeConnecting: return "Connecting..."
+            case .online: return "JARVIS connected"
+            case .wakeTimedOut(let sent): return "The wake request was sent to \(sent), but JARVIS never answered."
+            case .connectionFailed(let why): return why
+            case .unpaired: return "Pair with a PC to begin."
+            }
+        }
+
+        var canWake: Bool {
+            switch self {
+            case .wakeAvailable, .offline, .wakeTimedOut, .connectionFailed: return true
+            default: return false
+            }
+        }
+
+        var isOnline: Bool { if case .online = self { return true } else { return false } }
+    }
+
+    /// The PC as the device page shows it: the link, plus whether waking is possible from here.
+    var device: DeviceState {
+        if let wake = wakeState { return wake }
+        switch link {
+        case .unpaired: return .unpaired
+        case .online(let name): return .online(name)
+        case .connecting: return .bridgeConnecting
+        case .offline(let why):
+            return wakeProfile.usable || wakeProfile.reachableRemotely ? .wakeAvailable : .offline(why)
+        }
+    }
+
+    /// Set while a wake is in flight, and cleared the moment the bridge comes up or the wait ends.
+    @Published private(set) var wakeState: DeviceState?
+
+    /// What this phone knows about waking the PC. Told to it by the PC; never typed unless the owner insists.
+    @Published var wakeProfile = WakeProfile.load()
+
+    /// How long to wait for the PC to answer after a wake request.
+    ///
+    /// Ninety seconds. A machine coming out of sleep is on the network in five to fifteen; one
+    /// coming from hibernate or a cold start takes longer, and Tailscale needs a moment after that
+    /// to reconnect. Long enough not to give up on a working wake, short enough that a wake that
+    /// did nothing does not leave the page saying "waiting" for ever.
+    static let wakeWindow = 90
+
+    private let wakeService = WakeOnLanService()
+    private var waking: Task<Void, Never>?
+
+    /// Sends a wake request, then keeps trying the bridge until the PC answers or the window ends.
+    ///
+    /// The two halves are deliberately separate. Wake-on-LAN cannot tell whether it worked - UDP is
+    /// not acknowledged and there is no reply in the protocol - so "sent" is all the first half ever
+    /// claims, and the second half is what actually establishes that the PC is awake: it answered.
+    func wakePC() {
+        guard waking == nil else { return }
+
+        // The task inherits this class's actor, so everything inside it - including clearing the
+        // handle when it finishes - runs on the main actor like the rest of the model.
+        waking = Task { [weak self] in
+            guard let self else { return }
+            await self.wakeAndWait()
+            self.waking = nil
+        }
+    }
+
+    private func wakeAndWait() async {
+        wakeState = .wakeRequested
+        var profile = wakeProfile
+        profile.lastAttempt = Date()
+        profile.save()
+        wakeProfile = profile
+
+        let onCellular = network.cellular
+        let outcome = await wakeService.wake(profile, cellular: onCellular)
+
+        guard outcome.sent else {
+            note("wake: \(outcome.because)")
+            wakeState = .connectionFailed(outcome.because)
+            return
+        }
+
+        note("wake: sent \(outcome.packets) packets to \(outcome.destination)")
+        wakeState = .waking(sent: outcome.destination, seconds: 0)
+
+        // Try the bridge repeatedly rather than once at the end: the PC may be up in five seconds,
+        // and making somebody wait ninety for a page to notice is its own kind of broken.
+        let started = Date()
+        while Date().timeIntervalSince(started) < Double(Self.wakeWindow) {
+            if Task.isCancelled { wakeState = nil; return }
+
+            await connect()
+
+            if link.isOnline {
+                let took = Date().timeIntervalSince(started)
+                note(String(format: "wake: %@ answered after %.1f s", pcName, took))
+                wakeState = nil
+                return
+            }
+
+            try? await Task.sleep(for: .seconds(3))
+            wakeState = .waking(sent: outcome.destination, seconds: Int(Date().timeIntervalSince(started)))
+        }
+
+        note("wake: no answer after \(Self.wakeWindow) s")
+        wakeState = .wakeTimedOut(outcome.destination)
+    }
+
+    /// What JARVIS says when asked to wake the PC. Never that it is awake - only that it was asked.
+    func wakeAnswer() -> String {
+        let name = wakeProfile.deviceName.isEmpty ? "your PC" : wakeProfile.deviceName
+
+        if !wakeProfile.enabled { return "Waking \(name) is switched off, sir." }
+        if wakeProfile.mac == nil {
+            return "I don't know \(name)'s network card yet, sir. Connect to it once at home and it will tell me."
+        }
+        if WakeOnLanService.strategies(for: wakeProfile, cellular: network.cellular).isEmpty {
+            return "I can only wake \(name) from home, sir - there's no way in from outside set up yet."
+        }
+
+        return "Sending the wake request now, sir. I'll connect as soon as \(name) answers."
+    }
+
+    /// Clears a finished wake so the page goes back to the ordinary states.
+    func dismissWake() {
+        waking?.cancel()
+        waking = nil
+        wakeState = nil
+    }
+
+    /// What the PC said about itself, saved so that being away from home needs nothing typed.
+    ///
+    /// Called after every successful connection. The PC knows its own addresses and its own card
+    /// exactly; this channel has already proved which PC it is and is encrypted; so the PC says and
+    /// this saves. Nothing here is a secret - an address is not a key.
+    private func learnNetwork(_ body: [String: Any]) {
+        guard var paired = pc else { return }
+
+        let endpoints = (body["endpoints"] as? [[String: Any]]) ?? []
+        let hosts = { (kind: String) in
+            endpoints.filter { ($0["kind"] as? String) == kind }.compactMap { $0["host"] as? String }
+        }
+
+        let remote = hosts("private"), local = hosts("local")
+        if !remote.isEmpty { paired.remoteHosts = remote }
+        if !local.isEmpty { paired.localHosts = local }
+        if let port = body["port"] as? Int, let port = UInt16(exactly: port), port > 0 { paired.port = port }
+        paired.save()
+        pc = paired
+
+        if let wake = body["wake"] as? [String: Any] {
+            var profile = wakeProfile
+            profile.deviceName = (body["machine"] as? String) ?? profile.deviceName
+            if let mac = MacAddress(wake["mac"] as? String) { profile.mac = mac }
+            if let broadcast = wake["broadcast"] as? String, !broadcast.isEmpty { profile.broadcast = broadcast }
+            if let port = wake["port"] as? Int, let port = UInt16(exactly: port) { profile.port = port }
+
+            // The remote host is the owner's to set, on the PC or here. Taken from the PC when it
+            // has one and this phone does not, so setting it once on either side is enough.
+            if let host = wake["remoteHost"] as? String, !host.isEmpty, profile.remoteHost.isEmpty {
+                profile.remoteHost = host
+            }
+            if let port = wake["remotePort"] as? Int, let port = UInt16(exactly: port), port > 0 {
+                profile.remotePort = port
+            }
+
+            profile.save()
+            wakeProfile = profile
+            note("network: \(remote.count) remote, \(local.count) local, wake \(profile.mac == nil ? "unavailable" : profile.mac!.description)")
+        }
+    }
+
+    /// Saves what the owner typed for waking the PC from outside, and keeps the rest as the PC said it.
+    func setWakeRemote(host: String, port: UInt16?) {
+        var profile = wakeProfile
+        profile.remoteHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let port, port > 0 { profile.remotePort = port }
+        profile.save()
+        wakeProfile = profile
+    }
+
+    func setWakeEnabled(_ on: Bool) {
+        var profile = wakeProfile
+        profile.enabled = on
+        profile.save()
+        wakeProfile = profile
+    }
+
+    func setWakeOverCellular(_ on: Bool) {
+        var profile = wakeProfile
+        profile.overCellular = on
+        profile.save()
+        wakeProfile = profile
+    }
+
+    func setPreferLocal(_ on: Bool) {
+        guard var paired = pc else { return }
+        paired.preferLocal = on
+        paired.save()
+        pc = paired
     }
 
     // MARK: connection
@@ -206,46 +455,72 @@ final class AppModel: ObservableObject {
         connecting = nil
     }
 
-    /// Home first, then away-from-home - or the other way round on mobile data, where the home address cannot answer.
+    /// Every way this phone could reach the PC, best first, each given a short turn.
+    ///
+    /// This was two candidates and a coin toss - the home address and a typed away-from-home one,
+    /// ordered by whether the phone was on mobile data - which is wrong in both directions. On a
+    /// café's Wi-Fi the phone is not on cellular, so the home address went first and reached
+    /// nothing. On mobile data with nothing typed there was nothing to try at all.
+    ///
+    /// Now the PC hands over every address it has while the phone is at home, and
+    /// `BridgeEndpointResolver` puts them in order for where the phone is now. Each gets
+    /// `perCandidate` seconds rather than twelve: an address that cannot be reached from this
+    /// network does not fail, it waits, so the timeout is the thing that moves on to the next one.
     private func connectNow() async {
         guard let pc else { link = .unpaired; return }
         if let client, await client.isOpen, link.isOnline { return }
 
         link = .connecting
-        var routes: [(name: String, endpoint: NWEndpoint)] = [("Home network", pc.endpoint)]
-        if let remote = pc.remoteEndpoint {
-            if network.cellular { routes.insert(("Away from home", remote), at: 0) } else { routes.append(("Away from home", remote)) }
+
+        let candidates = BridgeEndpointResolver.candidates(
+            for: pc,
+            discovered: browser.found,
+            cellular: network.cellular,
+            preferLocal: pc.preferLocal ?? true)
+
+        guard !candidates.isEmpty else {
+            note("no address to try: \(network.cellular ? "on mobile data with no away-from-home address" : "nothing found on this network")")
+            route = nil
+            link = .offline("No way to reach the PC from here yet. Connect once at home, and it will tell this phone where else to find it.")
+            scheduleReconnect()
+            return
         }
 
+        note("\(network.cellular ? "cellular" : "wi-fi"): \(candidates.count) to try")
+
         var lastError: Error = BridgeError.closed
-        for route in routes {
-            let client = BridgeClient(endpoint: route.endpoint)
+        for candidate in candidates {
+            if Task.isCancelled { return }
+
+            let client = BridgeClient(endpoint: candidate.endpoint)
             let identity = ObjectIdentifier(client)
             await client.setHandlers(
                 push: { message in Task { @MainActor in AppModel.shared.handlePush(message) } },
                 close: { error in Task { @MainActor in AppModel.shared.dropped(error, from: identity) } })
 
             let started = Date()
-            note("\(route.name): connecting")
+            note("trying \(candidate.describedAs)")
             do {
                 let deviceId = pc.deviceId, serverKey = pc.serverKey
-                let name = try await Self.within(12, cancel: { await client.close() }) {
+                let name = try await Self.within(BridgeEndpointResolver.perCandidate + 6, cancel: { await client.close() }) {
                     try await client.resume(deviceId: deviceId, pinnedServerKey: serverKey)
                 }
-                note(String(format: "%@: online in %.1f s", route.name, Date().timeIntervalSince(started)))
+                note(String(format: "%@: online in %.1f s", candidate.describedAs, Date().timeIntervalSince(started)))
                 self.client = client
                 failures = 0
                 ControlModel.shared.connectionChanged()
                 controlling = false
-                self.route = route.name
+                self.route = candidate.describedAs
                 link = .online(name)
+                wakeState = nil
                 await refresh()
                 return
             } catch {
                 await client.close()
                 lastError = error
-                note(String(format: "%@: %@ after %.1f s", route.name, error.localizedDescription, Date().timeIntervalSince(started)))
-                // A PC that no longer knows this phone will not know it by another route either.
+                note(String(format: "%@: %@ after %.1f s", candidate.describedAs, error.localizedDescription, Date().timeIntervalSince(started)))
+                // A PC that no longer knows this phone will not know it by another route either -
+                // the identity it refuses is the same identity on every address.
                 if (error as? BridgeError)?.needsPairingAgain == true {
                     link = .offline(error.localizedDescription)
                     return
@@ -279,8 +554,12 @@ final class AppModel: ObservableObject {
         // Nobody is looking at the screen from a pocket.
         if phase != .active, liveDisplay != nil { Task { await stopLive() } }
         if phase == .active {
+            // Bonjour runs while the app is open: seeing the PC on this network is proof the phone
+            // is at home, which beats any guess from the interface type.
+            browser.start()
             Task { await connect() }
         } else if phase == .background && !wake.running {
+            browser.stop()
             // Without background audio iOS suspends the app anyway; close cleanly so the PC's count is right.
             Task { await disconnect() }
         }
@@ -322,6 +601,11 @@ final class AppModel: ObservableObject {
         guard let client = try? await session() else { return }
         if let reply = try? await client.request("status") { status = reply.body }
         if let reply = try? await client.request("security.status") { security = SecuritySnapshot(reply.body) }
+
+        // Where else this PC can be reached, and how it would be woken, straight from the PC. An
+        // older PC that does not know the request answers "failed" and this quietly does nothing,
+        // which is exactly what should happen: the app keeps whatever it already had.
+        if let reply = try? await client.request("network"), reply.kind == "network" { learnNetwork(reply.body) }
     }
 
     // MARK: asking
@@ -331,6 +615,16 @@ final class AppModel: ObservableObject {
         guard !request.isEmpty else { return }
 
         lines.append(ChatLine(speaker: .you, text: request))
+
+        // The few requests this phone must answer itself, because the PC cannot: "wake my PC" sent
+        // to a sleeping PC is a request with nowhere to go. One reading of the sentence, used by the
+        // typed box, the wake word and Siri alike - so the button and the words are the same action.
+        if case .wake = LocalCapability.of(request), !link.isOnline {
+            lines.append(ChatLine(speaker: .jarvis, text: wakeAnswer()))
+            wakePC()
+            return
+        }
+
         thinking = true
         defer { thinking = false }
 
@@ -636,6 +930,25 @@ final class AppModel: ObservableObject {
 
     /// The network changed under a running stream: restart it with the right quality for the new one.
     func networkChanged() {
+        // The best way to reach the PC is a different one on a different network, so the whole
+        // question is asked again rather than the current answer being kept. Wi-Fi to cellular,
+        // cellular to Wi-Fi, a VPN coming up or going away: each of them changes which candidate
+        // wins, and an app that only notices at the next reconnect is an app that sits offline in
+        // the owner's pocket until they open it.
+        note("network changed: \(network.cellular ? "cellular" : "wi-fi")")
+
+        Task {
+            if !link.isOnline {
+                await connect()
+            } else if let client, !(await client.isOpen) {
+                // The interface changed under an open connection. A socket on an interface that has
+                // gone does not always report itself closed; asking is cheap and being wrong here
+                // is an app that looks connected and answers nothing.
+                await disconnect()
+                await connect()
+            }
+        }
+
         guard let display = liveDisplay else { return }
         Task { await startLive(display) }
     }
@@ -711,6 +1024,8 @@ final class AppModel: ObservableObject {
         status = [:]
         security = nil
         link = .unpaired
+        wakeState = nil
+        wakeProfile = .default
     }
 
     /// From the widget or Control Centre: listen for one request without the wake word, and send it when the speaker

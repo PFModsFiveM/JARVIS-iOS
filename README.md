@@ -36,6 +36,14 @@ private networks when asked), press *Pair an iPhone*, and approve when the six d
 
 - **Pairs** over home Wi-Fi: finds the PC by Bonjour or you type its address, you enter the code the PC shows,
   both screens show the same six digits, you say yes on the PC.
+- **Works away from home.** With Tailscale on the PC and on this iPhone, the app reaches JARVIS from mobile data
+  or any Wi-Fi - and there is nothing to type: connect once at home and the PC hands over every address it has.
+  Everything stays encrypted end to end exactly as at home, and the PC still has to prove it is the PC this phone
+  paired with, so moving between networks never means pairing again.
+- **Wakes the PC while it is asleep.** Deliberately separate from the bridge, which cannot help with a machine
+  that is off: from home the phone broadcasts on the local network, from outside it sends to a host you set and
+  your router forwards it inwards. A sent packet is a wake request and never a woken PC - the app says ONLINE when
+  JARVIS answers, not when the packet left. Say "JARVIS, wake my PC", press the button, or ask Siri.
 - **Ask JARVIS** by typing or by voice; answers come back as text and are spoken in **JARVIS's own voice** - the
   PC renders each answer with the same Piper voice it speaks with and sends the audio (Settings › Voice ›
   JARVIS's own voice; the iPhone's voice is the fallback).
@@ -65,15 +73,21 @@ private networks when asked), press *Pair an iPhone*, and approve when the six d
 - Standing the protocol down and answering a challenge need a second signature from an approval key the Secure
   Enclave uses only after Face ID, and which dies if Face ID enrolment changes. A thief with your unlocked phone
   cannot do either.
-- Nothing leaves your home network. No accounts, no cloud, no push server. The keys never leave the Secure
-  Enclave, and what is in the Keychain is device-bound and never synced.
+- No accounts, no cloud, no push server, and nothing readable by anybody in between. Away from home the traffic
+  goes over your own Tailscale network, which carries the bytes and cannot read them - the encryption and the
+  pinned PC identity are the same wherever you are. The keys never leave the Secure Enclave, and what is in the
+  Keychain is device-bound and never synced.
+- Wake-on-LAN is the one thing here with no cryptography in it, because the protocol has none: a magic packet
+  carries no secret and proves nothing about who sent it. That is exactly why the only thing it may do is switch a
+  machine on. If you forward a port for it, the worst anybody who finds that port can do is turn your PC on.
 
 ## Limits (by design, or by iOS)
 
 - Alerts arrive only while the app is connected: on screen, or in the background while the wake word is on.
   Alerts with the app fully closed would need Apple Push Notifications and an internet-facing relay.
-- Away from home Wi-Fi the app cannot reach the PC. A VPN back to your home network works if you type the PC's
-  VPN address when pairing.
+- Wake-on-LAN needs a **wired** card. Over Wi-Fi it needs the card, the driver and the access point all to agree
+  about it and usually does not work, so the app does not offer it: a button that fails silently is worse than no
+  button. Waking from outside the house also needs one rule on your router - see Settings › Waking.
 - iOS stops background listening during calls, Siri, and other apps' recording; it restarts when they end.
 - JARVIS also answers out loud on the PC when you ask from the phone.
 

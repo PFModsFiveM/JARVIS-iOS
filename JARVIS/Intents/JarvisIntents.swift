@@ -298,6 +298,37 @@ struct InitiateSecurityIntent: AppIntent {
     }
 }
 
+// MARK: - waking the PC
+
+/// The one intent here that does not need the PC, because it is the one about a PC that is off.
+///
+/// Every other intent goes through `IntentLink`, which connects to the PC and asks it. This cannot:
+/// a sleeping PC has nothing listening to be asked. So it goes to the same `WakeOnLanService` the
+/// button on the home screen uses - one action, `device.power.wake`, reached by a button, by a typed
+/// sentence, by the wake word and by Siri.
+///
+/// It reports a request sent, never a PC woken. There is no reply in Wake-on-LAN to learn otherwise
+/// from; the app establishes the PC is awake by it answering the bridge, which is what the home
+/// screen then waits for.
+struct WakePCIntent: AppIntent {
+    static var title: LocalizedStringResource { "Wake my PC" }
+    static var description: IntentDescription {
+        IntentDescription("Sends a wake request to your PC's network card. Works while the PC is asleep and JARVIS is not running - that is the point of it.")
+    }
+
+    // Opened on purpose: the app then waits for the PC to answer and shows it coming up, which is
+    // the half of this that matters and cannot happen in a Shortcuts action that has already ended.
+    static var openAppWhenRun: Bool { true }
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let model = AppModel.shared
+        let answer = model.wakeAnswer()
+        model.wakePC()
+        return .result(dialog: IntentDialog(stringLiteral: answer))
+    }
+}
+
 // MARK: - Siri phrases
 
 /// At most ten appear as Siri phrases; every intent above is in the Shortcuts app either way.
@@ -321,6 +352,10 @@ struct JarvisShortcuts: AppShortcutsProvider {
                     shortTitle: "Run macro", systemImageName: "sparkles")
         AppShortcut(intent: WatchPCIntent(), phrases: ["Watch my PC with \(.applicationName)", "\(.applicationName) show my screen"],
                     shortTitle: "Watch PC", systemImageName: "display")
+        AppShortcut(intent: WakePCIntent(),
+                    phrases: ["\(.applicationName) wake my PC", "Wake my PC with \(.applicationName)",
+                              "\(.applicationName) turn my computer on", "\(.applicationName) start my PC"],
+                    shortTitle: "Wake PC", systemImageName: "power")
         AppShortcut(intent: SecurityStatusIntent(), phrases: ["\(.applicationName) security status"],
                     shortTitle: "Security status", systemImageName: "lock.shield")
     }

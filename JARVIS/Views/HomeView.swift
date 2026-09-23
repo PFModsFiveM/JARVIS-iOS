@@ -44,12 +44,10 @@ struct HomeView: View {
                     Reactor(color: model.security?.isChallenge == true ? HUD.alert : linkColor, active: model.wakePhase != .off)
                         .frame(width: 84, height: 84)
                 }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(model.pcName.uppercased())
-                        .font(.system(size: 18, weight: .bold, design: .monospaced))
-                        .foregroundStyle(HUD.text)
-                        .lineLimit(1)
-                    HUDLabel(text: linkText, color: linkColor)
+                VStack(alignment: .leading, spacing: 6) {
+                    // The PC, whether or not JARVIS is answering - with the wake button when it is
+                    // asleep and this phone can reach its card from where it is.
+                    DevicePanel()
                     if let security = model.security {
                         HUDLabel(text: "Security: \(security.description)", color: security.isChallenge ? HUD.alert : HUD.dim)
                             .lineLimit(1)
@@ -73,15 +71,6 @@ struct HomeView: View {
         .padding(16)
         .background(HUD.panel)
         .overlay(Rectangle().frame(height: 1).foregroundStyle(HUD.accent.opacity(0.3)), alignment: .bottom)
-    }
-
-    private var linkText: String {
-        switch model.link {
-        case .online: return "Online"
-        case .connecting: return "Connecting"
-        case .offline(let why): return why == nil ? "Offline" : "Offline - tap to retry"
-        case .unpaired: return "Not paired"
-        }
     }
 
     private var wakeText: String {

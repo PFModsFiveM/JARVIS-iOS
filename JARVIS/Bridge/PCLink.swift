@@ -20,8 +20,22 @@ struct PairedPC: Codable, Equatable {
     var host: String?
     var port: UInt16
     /// Where the PC is reachable away from home - its Tailscale address (100.x.y.z) or name. Tried after the home
-    /// address, or first on mobile data. Nil until set in Settings.
+    /// address, or first on mobile data. Nil until set in Settings or told by the PC.
     var remoteHost: String?
+
+    /// Every private-network address the PC has told this phone about, best first.
+    ///
+    /// The PC knows its own addresses exactly and the bridge has already proved which PC it is, so
+    /// it says and this saves (see `AppModel.learnNetwork`). What used to happen instead: the owner
+    /// found the address on another screen, typed it into Settings, and typed it again when it
+    /// changed - or did not, and the app stopped working away from home without saying why.
+    var remoteHosts: [String]?
+
+    /// Every local address the PC has told this phone about. Used when Bonjour cannot see it.
+    var localHosts: [String]?
+
+    /// The owner's setting: at home, use the home network rather than going round by Tailscale.
+    var preferLocal: Bool?
 
     var fingerprint: String {
         Data(SHA256Hash.of(serverKey).prefix(4)).hex
@@ -36,8 +50,17 @@ struct PairedPC: Codable, Equatable {
 
     /// The PC away from home, when an address for it has been set.
     var remoteEndpoint: NWEndpoint? {
-        guard let remoteHost, !remoteHost.isEmpty, let port = NWEndpoint.Port(rawValue: port) else { return nil }
-        return .hostPort(host: NWEndpoint.Host(remoteHost), port: port)
+        guard let host = remoteEndpoints.first, let port = NWEndpoint.Port(rawValue: port) else { return nil }
+        return .hostPort(host: NWEndpoint.Host(host), port: port)
+    }
+
+    /// Every way to reach the PC from anywhere, best first: what the owner typed, then what the PC
+    /// said. Typed first deliberately - somebody who has gone to the trouble meant it.
+    var remoteEndpoints: [String] {
+        var hosts: [String] = []
+        if let remoteHost, !remoteHost.isEmpty { hosts.append(remoteHost) }
+        for host in remoteHosts ?? [] where !host.isEmpty && !hosts.contains(host) { hosts.append(host) }
+        return hosts
     }
 
     private static let account = "paired-pc"
@@ -52,6 +75,7 @@ struct PairedPC: Codable, Equatable {
 
     static func forget() {
         Keychain.delete(account)
+        WakeProfile.forget()
         DeviceKeys.erase()
     }
 }

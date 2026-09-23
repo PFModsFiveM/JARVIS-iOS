@@ -66,7 +66,15 @@ actor BridgeClient {
     private var onPush: (@Sendable (BridgeMessage) -> Void)?
     private var onClose: (@Sendable (Error?) -> Void)?
 
-    init(endpoint: NWEndpoint) {
+    /// How long to wait for the socket before giving up on this address.
+    ///
+    /// An address that is not reachable from this network never fails outright - the connection just
+    /// waits - so this is what turns "waiting for ever" into "try the next one". The resolver sets
+    /// it, because it is the resolver that has a list to get through.
+    private let connectWithin: TimeInterval
+
+    init(endpoint: NWEndpoint, connectWithin: TimeInterval = BridgeEndpointResolver.perCandidate) {
+        self.connectWithin = connectWithin
         let parameters = NWParameters.tcp
         let websocket = NWProtocolWebSocket.Options()
         websocket.autoReplyPing = true
@@ -198,24 +206,10 @@ actor BridgeClient {
 
     // MARK: the handshake
 
-    /// Resumes a continuation once, whichever of the state handler or the timeout gets there first. A class, so the
-    /// two callbacks share it without capturing a mutable variable.
-    private final class Once: @unchecked Sendable {
-        private let lock = NSLock()
-        private var done = false
-
-        func claim() -> Bool {
-            lock.lock()
-            defer { lock.unlock() }
-            if done { return false }
-            done = true
-            return true
-        }
-    }
-
     private func open() async throws {
         let connection = self.connection
         let queue = self.queue
+        let connectWithin = self.connectWithin
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let once = Once()
             connection.stateUpdateHandler = { [weak self] state in
@@ -237,8 +231,8 @@ actor BridgeClient {
             connection.start(queue: queue)
 
             // An address that is not reachable from here (home Wi-Fi's, from mobile data) never fails outright - the
-            // connection just waits. Five seconds is plenty on a LAN or Tailscale; after that, try the next route.
-            queue.asyncAfter(deadline: .now() + 5) {
+            // connection just waits. After this, the resolver tries the next address it has.
+            queue.asyncAfter(deadline: .now() + connectWithin) {
                 if once.claim() {
                     continuation.resume(throwing: BridgeError.timedOut)
                     connection.cancel()
@@ -372,5 +366,23 @@ actor BridgeClient {
                 continuation.resume(returning: (data ?? Data(), metadata.opcode == .text))
             }
         }
+    }
+}
+
+/// Resumes a continuation once, whichever of the state handler or the timeout gets there first. A class, so the
+/// two callbacks share it without capturing a mutable variable.
+///
+/// At file scope rather than inside the client because the wake service needs the same thing, and
+/// two copies of "did somebody already resume this" is two places for the answer to differ.
+final class Once: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if done { return false }
+        done = true
+        return true
     }
 }
