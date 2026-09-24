@@ -83,7 +83,7 @@ struct ScreenView: View {
             HUDLabel(text: model.controlling ? (trackpad ? "Trackpad" : "Remote control") : "Live view", color: model.controlling ? HUD.amber : HUD.accent)
             Spacer()
             if model.liveDisplay != nil {
-                HUDLabel(text: model.network.cellular ? "Mobile data" : "Wi-Fi")
+                HUDLabel(text: model.onCellular ? "Mobile data" : "Wi-Fi")
                 HUDLabel(text: String(format: "%.0f fps", model.screenFramesPerSecond), color: HUD.good)
             }
         }

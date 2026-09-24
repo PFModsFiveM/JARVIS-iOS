@@ -70,7 +70,7 @@ struct DevicePanel: View {
     /// Written out rather than left as "it didn't work", because every one of these is a real thing
     /// that stops it and none of them is guessable from the phone.
     private var helpAfterTimeout: String {
-        model.network.cellular
+        model.onCellular
             ? "From mobile data the packet goes to your home connection and your router has to forward it inwards. Check the router still forwards \(model.wakeProfile.remotePort) to \(model.wakeProfile.broadcast.isEmpty ? "the home broadcast address" : model.wakeProfile.broadcast):\(model.wakeProfile.port), and that your home address has not changed."
             : "Check the PC's network card is allowed to wake it (Device Manager › the Ethernet card › Power Management), and that Wake-on-LAN is on in its BIOS. Wake-on-LAN over Wi-Fi usually does not work; this needs the wired card."
     }

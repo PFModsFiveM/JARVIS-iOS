@@ -90,30 +90,7 @@ struct SettingsView: View {
                         .font(.footnote).foregroundStyle(HUD.dim)
                 }
 
-                HUDFrame(title: "Where you are") {
-                    Toggle("Tell the PC where I am", isOn: Binding(
-                        get: { model.whereabouts.reporting },
-                        set: { on in on ? model.whereabouts.start() : model.whereabouts.stop() }))
-                        .tint(HUD.accent).foregroundStyle(HUD.text)
-
-                    if model.whereabouts.reporting {
-                        HStack {
-                            Text(model.whereabouts.lastReported.map { "Last sent \($0.formatted(date: .omitted, time: .shortened))" }
-                                 ?? "Nothing sent yet")
-                            Spacer()
-                            if model.whereabouts.waiting > 0 {
-                                Text("\(model.whereabouts.waiting) waiting")
-                            }
-                        }
-                        .font(.footnote).foregroundStyle(HUD.dim)
-                    } else if !model.whereabouts.authorised {
-                        Text("iOS will ask for location, and then ask again a little later whether JARVIS may have it all the time. The second one is the one that matters: without it JARVIS only knows where you are while this app is open.")
-                            .font(.footnote).foregroundStyle(HUD.dim)
-                    }
-
-                    Text("Your positions go to your own PC and nowhere else. iOS wakes JARVIS when you move a few hundred metres rather than tracking you continuously, which is why this costs almost no battery. Anything recorded while the PC is off waits on this phone and is sent when it comes back.")
-                        .font(.footnote).foregroundStyle(HUD.dim)
-                }
+                WhereaboutsSection(reporter: model.whereabouts)
 
                 HUDFrame(title: "Alerts when JARVIS is closed") {
                     Toggle("Send alerts through ntfy", isOn: Binding(get: { model.alertsTopic != nil }, set: { on in Task { await model.setAlerts(on) } }))
@@ -212,6 +189,44 @@ struct SettingsView: View {
             HUDLabel(text: label)
             Spacer()
             Text(value).font(.system(.body, design: .monospaced)).foregroundStyle(HUD.text).lineLimit(1)
+        }
+    }
+}
+
+/// Where you are, and whether the PC is being told.
+///
+/// Its own view watching its own object, rather than reading the reporter through the app model.
+/// A view redraws for the objects it observes, and the reporter is not the app model: granting the
+/// permission would have left this toggle showing off until the screen was left and come back to.
+/// Elsewhere this codebase mirrors nested state onto the app model for the same reason - that is
+/// right for one value, and four would be four things to keep in step.
+struct WhereaboutsSection: View {
+    @ObservedObject var reporter: LocationReporter
+
+    var body: some View {
+        HUDFrame(title: "Where you are") {
+            Toggle("Tell the PC where I am", isOn: Binding(
+                get: { reporter.reporting },
+                set: { on in on ? reporter.start() : reporter.stop() }))
+                .tint(HUD.accent).foregroundStyle(HUD.text)
+
+            if reporter.reporting {
+                HStack {
+                    Text(reporter.lastReported.map { "Last sent \($0.formatted(date: .omitted, time: .shortened))" }
+                         ?? "Nothing sent yet")
+                    Spacer()
+                    if reporter.waiting > 0 {
+                        Text("\(reporter.waiting) waiting")
+                    }
+                }
+                .font(.footnote).foregroundStyle(HUD.dim)
+            } else if !reporter.authorised {
+                Text("iOS will ask for location, and then ask again a little later whether JARVIS may have it all the time. The second one is the one that matters: without it JARVIS only knows where you are while this app is open.")
+                    .font(.footnote).foregroundStyle(HUD.dim)
+            }
+
+            Text("Your positions go to your own PC and nowhere else. iOS wakes JARVIS when you move a few hundred metres rather than tracking you continuously, which is why this costs almost no battery. Anything recorded while the PC is off waits on this phone and is sent when it comes back.")
+                .font(.footnote).foregroundStyle(HUD.dim)
         }
     }
 }

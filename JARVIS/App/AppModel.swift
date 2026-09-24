@@ -141,6 +141,16 @@ final class AppModel: ObservableObject {
     /// What the wake word is doing, mirrored here so the views watch this one object.
     @Published private(set) var wakePhase: WakeListener.Phase = .off
 
+    /// Whether the only way out is mobile data, mirrored here for the same reason.
+    ///
+    /// Six places across the views read this to decide what to show and what to try. They were
+    /// reading it off `network`, which is a different observable object - so they redrew only
+    /// because the change also wrote a line to `connectionLog`, which is published and which they
+    /// do watch. That worked, and it worked by accident: tidying away one log line would have left
+    /// every "Wi-Fi or cellular" label in the app showing yesterday's answer, including the one on
+    /// the diagnostics screen somebody would be reading precisely because something was wrong.
+    @Published private(set) var onCellular = false
+
     private var client: BridgeClient?
     private var reconnect: Task<Void, Never>?
 
@@ -506,11 +516,13 @@ final class AppModel: ObservableObject {
             // Mobile data gets longer and gets to sit through "not yet": the list is short there,
             // so there is nothing else to spend the time on, and "not yet" is how a connection over
             // a cellular radio and an on-demand tunnel begins rather than how it fails.
-            let onCellular = network.cellular
+            // The live reading rather than the published mirror: this decides how to connect, and
+            // it should use what the network is doing now rather than what the views were last told.
+            let cellularNow = network.cellular
             let client = BridgeClient(
                 endpoint: candidate.endpoint,
-                connectWithin: BridgeEndpointResolver.patience(cellular: onCellular),
-                patientWhileWaiting: onCellular)
+                connectWithin: BridgeEndpointResolver.patience(cellular: cellularNow),
+                patientWhileWaiting: cellularNow)
 
             let identity = ObjectIdentifier(client)
             await client.setHandlers(
@@ -521,7 +533,7 @@ final class AppModel: ObservableObject {
             note("trying \(candidate.describedAs)")
             do {
                 let deviceId = pc.deviceId, serverKey = pc.serverKey
-                let name = try await Self.within(BridgeEndpointResolver.patience(cellular: onCellular) + 6, cancel: { await client.close() }) {
+                let name = try await Self.within(BridgeEndpointResolver.patience(cellular: cellularNow) + 6, cancel: { await client.close() }) {
                     try await client.resume(deviceId: deviceId, pinnedServerKey: serverKey)
                 }
                 note(String(format: "%@: online in %.1f s", candidate.describedAs, Date().timeIntervalSince(started)))
@@ -958,7 +970,8 @@ final class AppModel: ObservableObject {
         // cellular to Wi-Fi, a VPN coming up or going away: each of them changes which candidate
         // wins, and an app that only notices at the next reconnect is an app that sits offline in
         // the owner's pocket until they open it.
-        note("network changed: \(network.cellular ? "cellular" : "wi-fi")")
+        onCellular = network.cellular
+        note("network changed: \(onCellular ? "cellular" : "wi-fi")")
 
         Task {
             if !link.isOnline {

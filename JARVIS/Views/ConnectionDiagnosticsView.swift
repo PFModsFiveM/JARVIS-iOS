@@ -27,7 +27,7 @@ struct ConnectionDiagnosticsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 HUDFrame(title: "Network") {
-                    row("This phone", model.network.cellular ? "Cellular" : "Wi-Fi or wired")
+                    row("This phone", model.onCellular ? "Cellular" : "Wi-Fi or wired")
                     row("Bonjour", browser.found.isEmpty ? "nothing found" : "\(browser.found.count) found")
                     if let problem = browser.problem {
                         Text(problem).font(.footnote).foregroundStyle(HUD.amber).fixedSize(horizontal: false, vertical: true)
@@ -98,7 +98,7 @@ struct ConnectionDiagnosticsView: View {
         guard let pc = model.pc else { return [] }
         return BridgeEndpointResolver.candidates(
             for: pc, discovered: browser.found,
-            cellular: model.network.cellular, preferLocal: pc.preferLocal ?? true)
+            cellular: model.onCellular, preferLocal: pc.preferLocal ?? true)
     }
 
     private var stateText: String {
@@ -111,8 +111,8 @@ struct ConnectionDiagnosticsView: View {
     }
 
     private var strategyText: String {
-        let order = WakeOnLanService.strategies(for: model.wakeProfile, cellular: model.network.cellular)
-        if order.isEmpty { return model.network.cellular ? "nothing set up for outside the house" : "not set up" }
+        let order = WakeOnLanService.strategies(for: model.wakeProfile, cellular: model.onCellular)
+        if order.isEmpty { return model.onCellular ? "nothing set up for outside the house" : "not set up" }
         return order.map { $0 == .localBroadcast ? "home broadcast" : "through the router" }.joined(separator: ", then ")
     }
 
