@@ -670,29 +670,50 @@ final class AppModel: ObservableObject {
     /// The PC forgets a device that has been silent for ninety seconds, which is the whole reason
     /// this can be honest: the phone says what it knows while it knows it, and says nothing rather
     /// than claiming the opposite when it stops knowing.
-    static let presenceEvery: TimeInterval = 45
+    nonisolated static let presenceEvery: TimeInterval = 45
 
-    /// Tells the PC the phone is in the owner's hand.
+    /// Tells the PC what this phone can honestly say about itself.
     ///
-    /// The PC asks every device it can reach whether it is on the user, and uses the answers to
-    /// decide which of them should speak. It has been asking since the bridge was written and this
-    /// phone has never once answered - so the heaviest input into that decision has been missing,
-    /// from the device best placed to give it.
+    /// The PC asks every device it can reach, and uses the answers to decide which of them should
+    /// speak. It has been asking since the bridge was written and this phone has never once
+    /// answered - so an input into that decision has been missing, from a device that has it.
     ///
-    /// **Only what a phone can actually know.** An app in the foreground means somebody is holding
-    /// it, which is as close to "worn" as a phone gets and is certain. The opposite is not: an app
-    /// in the background says nothing about where the phone is, so nothing is sent then and the PC
-    /// forgets on its own after ninety seconds. Claiming "not in hand" would be inventing a fact to
-    /// fill a silence.
+    /// **"Worn" is not "in my hand".** It means what the arbiter weighs it as: on the user and
+    /// heard by nobody else. A phone's speaker is as public as the PC's, so a phone being held is
+    /// not that at all - reporting it would send private answers to a loudspeaker on a table. What
+    /// is the same thing for a phone is where its audio is going: headphones or an earpiece are
+    /// heard by the owner and nobody else, and the phone knows which.
     ///
-    /// Busy is audio somebody else started - a call, a video, music from another app - because that
-    /// is the case where an answer spoken here would talk over something.
+    /// **Busy** is audio somebody else started - a call, a video, another app's music - because
+    /// that is the case where an answer spoken here would talk over something.
+    ///
+    /// Nothing is claimed while the app is in the background: what a phone can see of its own
+    /// audio route is only true while it is in front, and the PC forgets a device that has gone
+    /// quiet after ninety seconds. Silence is the honest answer, not a guess.
     func reportPresence() async {
         guard link.isOnline, let client = try? await session() else { return }
 
-        let busy = AVAudioSession.sharedInstance().isOtherAudioPlaying
+        let audio = AVAudioSession.sharedInstance()
 
-        _ = try? await client.request("presence", ["worn": 1, "busy": busy ? 1 : 0])
+        _ = try? await client.request("presence", [
+            "worn": Self.privateAudio(audio.currentRoute.outputs.map(\.portType)) ? 1 : 0,
+            "busy": audio.isOtherAudioPlaying ? 1 : 0
+        ])
+    }
+
+    /// Whether what this phone plays would be heard by its owner alone.
+    ///
+    /// Headphones and the earpiece, wired or not. Deliberately not AirPlay or a car: those are
+    /// somewhere else in the room or the vehicle, which is the opposite of private, and the built-in
+    /// speaker least of all.
+    /// Takes the port types rather than the route, so this can be checked without an audio session -
+    /// a route description is not something a test can build.
+    nonisolated static func privateAudio(_ outputs: [AVAudioSession.Port]) -> Bool {
+        let heardOnlyByTheOwner: Set<AVAudioSession.Port> = [
+            .headphones, .bluetoothA2DP, .bluetoothHFP, .bluetoothLE, .builtInReceiver, .usbAudio
+        ]
+
+        return outputs.contains { heardOnlyByTheOwner.contains($0) }
     }
 
     func refresh() async {
