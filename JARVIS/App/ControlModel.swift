@@ -17,6 +17,17 @@ final class ControlModel: ObservableObject {
         var art: UIImage?
     }
 
+    /// A running FiveM server, as the phone shows it.
+    struct FiveM: Equatable {
+        var name: String?
+        var players = 0
+        var maximum = 0
+        var names: [String] = []
+
+        /// "3 of 32", or just the number when the server does not say what its limit is.
+        var count: String { maximum > 0 ? "\(players) of \(maximum)" : "\(players)" }
+    }
+
     struct Stats: Equatable {
         var cpu: Double?
         var memoryUsed: Double?
@@ -55,6 +66,12 @@ final class ControlModel: ObservableObject {
 
     @Published private(set) var media = Media()
     @Published private(set) var stats = Stats()
+
+    /// The FiveM server on the PC, when there is one running.
+    ///
+    /// Nil when it is not, and the panel is absent rather than empty: a server that is off is not
+    /// news, and a box saying "not running" on a screen somebody checks at a glance is noise.
+    @Published private(set) var fivem: FiveM?
     @Published private(set) var apps: [App] = []
     @Published private(set) var pcClipboard: String?
     @Published private(set) var transfer: (name: String, progress: Double)?
@@ -112,6 +129,26 @@ final class ControlModel: ObservableObject {
     }
 
     // MARK: stats
+
+    /// What the server is doing, read from its own local endpoints by the PC.
+    ///
+    /// The PC has been able to answer this since the bridge was written and nothing ever asked.
+    func refreshFiveM() async {
+        guard let reply = await call("fivem"), reply.kind == "fivem" else { return }
+
+        let body = reply.body
+
+        guard body["running"] as? Bool == true else {
+            fivem = nil
+            return
+        }
+
+        fivem = FiveM(
+            name: body["name"] as? String,
+            players: Int(number(body["players"]) ?? 0),
+            maximum: Int(number(body["maxPlayers"]) ?? 0),
+            names: (body["playerNames"] as? [String] ?? []).filter { !$0.isEmpty })
+    }
 
     func refreshStats() async {
         guard let reply = await call("stats"), reply.kind == "stats" else { return }

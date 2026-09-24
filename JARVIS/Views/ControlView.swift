@@ -24,11 +24,19 @@ struct ControlView: View {
                     mediaPanel
                     MacrosPanel()
                     ProgressPanel()
-                    GamesPanel()
-                    ObsPanel()
-                    statsPanel
-                    appsPanel
-                    transferPanel
+
+                    // Grouped because a view builder takes ten children and this screen had
+                    // reached exactly ten. The eleventh does not fail with "too many views" - it
+                    // fails with the compiler unable to type-check the expression, several minutes
+                    // in, pointing at the wrong line. Better to leave room than to leave that.
+                    Group {
+                        GamesPanel()
+                        ObsPanel()
+                        fiveMPanel
+                        statsPanel
+                        appsPanel
+                        transferPanel
+                    }
                 }
                 .padding(16)
             }
@@ -70,7 +78,8 @@ struct ControlView: View {
         async let apps: Void = control.refreshApps()
         async let progress: Void = LibraryModel.shared.refreshProgress()
         async let obs: Void = LibraryModel.shared.refreshObs()
-        _ = await (media, stats, apps, progress, obs)
+        async let fivem: Void = control.refreshFiveM()
+        _ = await (media, stats, apps, progress, obs, fivem)
     }
 
     private static func stamp() -> String {
@@ -269,6 +278,35 @@ struct ControlView: View {
             }
             Text("Files you send land in Downloads › From iPhone on the PC. Face ID the first time each session.")
                 .font(.footnote).foregroundStyle(HUD.dim)
+        }
+    }
+
+    // MARK: the FiveM server
+
+    /// Who is on the server, when one is running.
+    ///
+    /// Absent entirely when it is not. A panel that says "not running" is a line of noise on a
+    /// screen read at a glance, and the PC already answers the question honestly either way.
+    @ViewBuilder private var fiveMPanel: some View {
+        if let server = control.fivem {
+            HUDFrame(title: server.name ?? "FiveM") {
+                HStack {
+                    Text("\(server.count) on")
+                        .font(.system(size: 22, weight: .bold, design: .monospaced))
+                        .foregroundStyle(server.players > 0 ? HUD.good : HUD.dim)
+                    Spacer()
+                }
+
+                if server.names.isEmpty {
+                    Text(server.players > 0 ? "The server isn't naming them." : "Nobody on at the moment.")
+                        .font(.footnote).foregroundStyle(HUD.dim)
+                } else {
+                    // Wrapped rather than a list: a name is short and thirty of them in a column
+                    // would push everything else off the screen.
+                    Text(server.names.joined(separator: " \u{00B7} "))
+                        .font(.footnote).foregroundStyle(HUD.text)
+                }
+            }
         }
     }
 
