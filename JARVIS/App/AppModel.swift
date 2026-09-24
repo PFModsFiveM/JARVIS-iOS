@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Network
 import SwiftUI
@@ -584,6 +585,15 @@ final class AppModel: ObservableObject {
         foreground = phase == .active
         // Nobody is looking at the screen from a pocket.
         if phase != .active, liveDisplay != nil { Task { await stopLive() } }
+
+        // While the app is in front, keep telling the PC so - and stop the moment it is not, which
+        // is what makes the silence mean something. The PC forgets after ninety seconds.
+        if phase == .active {
+            startSayingWeAreHere()
+        } else {
+            stopSayingWeAreHere()
+        }
+
         if phase == .active {
             // Bonjour runs while the app is open: seeing the PC on this network is proof the phone
             // is at home, which beats any guess from the interface type.
@@ -594,6 +604,33 @@ final class AppModel: ObservableObject {
             // Without background audio iOS suspends the app anyway; close cleanly so the PC's count is right.
             Task { await disconnect() }
         }
+    }
+
+    private var presenceHeartbeat: Task<Void, Never>?
+
+    /// Says "still in hand" every so often, for as long as the app is in front.
+    ///
+    /// A repeat rather than one message, because the PC deliberately forgets a device that has gone
+    /// quiet - that is what lets the phone stay honest by saying nothing when it stops knowing. The
+    /// first report is the one `refresh` already sends on connecting; this keeps it from expiring
+    /// under somebody who is still holding the phone.
+    private func startSayingWeAreHere() {
+        guard presenceHeartbeat == nil else { return }
+
+        presenceHeartbeat = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(Self.presenceEvery))
+
+                if Task.isCancelled { return }
+
+                await self?.reportPresence()
+            }
+        }
+    }
+
+    private func stopSayingWeAreHere() {
+        presenceHeartbeat?.cancel()
+        presenceHeartbeat = nil
     }
 
     /// A connection closed. Only the one in use counts: an attempt that lost a race, or one already replaced, closing
@@ -628,6 +665,36 @@ final class AppModel: ObservableObject {
         return client
     }
 
+    /// How often to say "still here" while the app is in front.
+    ///
+    /// The PC forgets a device that has been silent for ninety seconds, which is the whole reason
+    /// this can be honest: the phone says what it knows while it knows it, and says nothing rather
+    /// than claiming the opposite when it stops knowing.
+    static let presenceEvery: TimeInterval = 45
+
+    /// Tells the PC the phone is in the owner's hand.
+    ///
+    /// The PC asks every device it can reach whether it is on the user, and uses the answers to
+    /// decide which of them should speak. It has been asking since the bridge was written and this
+    /// phone has never once answered - so the heaviest input into that decision has been missing,
+    /// from the device best placed to give it.
+    ///
+    /// **Only what a phone can actually know.** An app in the foreground means somebody is holding
+    /// it, which is as close to "worn" as a phone gets and is certain. The opposite is not: an app
+    /// in the background says nothing about where the phone is, so nothing is sent then and the PC
+    /// forgets on its own after ninety seconds. Claiming "not in hand" would be inventing a fact to
+    /// fill a silence.
+    ///
+    /// Busy is audio somebody else started - a call, a video, music from another app - because that
+    /// is the case where an answer spoken here would talk over something.
+    func reportPresence() async {
+        guard link.isOnline, let client = try? await session() else { return }
+
+        let busy = AVAudioSession.sharedInstance().isOtherAudioPlaying
+
+        _ = try? await client.request("presence", ["worn": 1, "busy": busy ? 1 : 0])
+    }
+
     func refresh() async {
         guard let client = try? await session() else { return }
         if let reply = try? await client.request("status") { status = reply.body }
@@ -641,6 +708,9 @@ final class AppModel: ObservableObject {
         // Anything the phone recorded while the PC was off. Sent oldest first, and it stops at the
         // first one that will not go rather than skipping it, so the PC's trail stays in order.
         await whereabouts.flush()
+
+        // And that this phone is in somebody's hand, which the PC cannot see for itself.
+        await reportPresence()
     }
 
     // MARK: asking
