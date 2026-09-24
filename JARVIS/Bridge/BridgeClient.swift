@@ -73,8 +73,26 @@ actor BridgeClient {
     /// it, because it is the resolver that has a list to get through.
     private let connectWithin: TimeInterval
 
-    init(endpoint: NWEndpoint, connectWithin: TimeInterval = BridgeEndpointResolver.perCandidate) {
+    /// Whether to sit through `.waiting` rather than treating it as a refusal.
+    ///
+    /// On Wi-Fi, a connection that reports `.waiting` has nowhere to go - the PC is asleep, or that
+    /// address belongs to a network this phone is not on - and giving up at once is what lets the
+    /// next address be tried quickly.
+    ///
+    /// On mobile data it means something else entirely, and this is why away-from-home control has
+    /// never worked. `.waiting` is the ordinary first state there: the radio has to bring a data
+    /// context up, the VPN tunnel is established on demand, and the name has to resolve through it.
+    /// All of that reports "cannot connect yet, will retry" - and JARVIS took the first one as a no
+    /// and moved on, in a few milliseconds, every time.
+    private let patientWhileWaiting: Bool
+
+    init(
+        endpoint: NWEndpoint,
+        connectWithin: TimeInterval = BridgeEndpointResolver.perCandidate,
+        patientWhileWaiting: Bool = false
+    ) {
         self.connectWithin = connectWithin
+        self.patientWhileWaiting = patientWhileWaiting
         let parameters = NWParameters.tcp
         let websocket = NWProtocolWebSocket.Options()
         websocket.autoReplyPing = true
@@ -210,6 +228,7 @@ actor BridgeClient {
         let connection = self.connection
         let queue = self.queue
         let connectWithin = self.connectWithin
+        let patient = self.patientWhileWaiting
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let once = Once()
             connection.stateUpdateHandler = { [weak self] state in
@@ -220,7 +239,11 @@ actor BridgeClient {
                     if once.claim() { continuation.resume(throwing: error) }
                     Task { await self?.closedByNetwork(error) }
                 case .waiting(let error):
-                    // No route yet (Wi-Fi off, PC asleep): give up rather than wait forever.
+                    // On mobile data this is where a working connection starts, so waiting is what
+                    // to do: the timeout below still bounds it. Anywhere else it means there is
+                    // nowhere to go, and failing now is what gets to the next address quickly.
+                    if patient { break }
+
                     if once.claim() { continuation.resume(throwing: error) }
                 case .cancelled:
                     if once.claim() { continuation.resume(throwing: BridgeError.closed) }

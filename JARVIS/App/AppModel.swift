@@ -503,7 +503,15 @@ final class AppModel: ObservableObject {
         for candidate in candidates {
             if Task.isCancelled { return }
 
-            let client = BridgeClient(endpoint: candidate.endpoint)
+            // Mobile data gets longer and gets to sit through "not yet": the list is short there,
+            // so there is nothing else to spend the time on, and "not yet" is how a connection over
+            // a cellular radio and an on-demand tunnel begins rather than how it fails.
+            let onCellular = network.cellular
+            let client = BridgeClient(
+                endpoint: candidate.endpoint,
+                connectWithin: BridgeEndpointResolver.patience(cellular: onCellular),
+                patientWhileWaiting: onCellular)
+
             let identity = ObjectIdentifier(client)
             await client.setHandlers(
                 push: { message in Task { @MainActor in AppModel.shared.handlePush(message) } },
@@ -513,7 +521,7 @@ final class AppModel: ObservableObject {
             note("trying \(candidate.describedAs)")
             do {
                 let deviceId = pc.deviceId, serverKey = pc.serverKey
-                let name = try await Self.within(BridgeEndpointResolver.perCandidate + 6, cancel: { await client.close() }) {
+                let name = try await Self.within(BridgeEndpointResolver.patience(cellular: onCellular) + 6, cancel: { await client.close() }) {
                     try await client.resume(deviceId: deviceId, pinnedServerKey: serverKey)
                 }
                 note(String(format: "%@: online in %.1f s", candidate.describedAs, Date().timeIntervalSince(started)))

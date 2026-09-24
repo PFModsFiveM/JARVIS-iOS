@@ -47,6 +47,25 @@ enum BridgeEndpointResolver {
     /// and short enough that walking through the whole list is still quick.
     static let perCandidate: TimeInterval = 2.5
 
+    /// And how long one gets on mobile data, where two and a half seconds was never enough.
+    ///
+    /// The number is short because the list is long, and on mobile data the list is not long: every
+    /// local address has already been dropped as unreachable, so what is left is the handful of
+    /// private-network addresses. Spending longer on each costs nothing, because there is nothing
+    /// else to spend it on - and it has to be longer, since the radio bringing a data context up
+    /// and a VPN tunnel being established on demand are both slower than a handshake on a LAN.
+    static let perCandidateOnCellular: TimeInterval = 8
+
+    /// What one candidate gets, given where the phone is.
+    static func patience(cellular: Bool) -> TimeInterval {
+        cellular ? perCandidateOnCellular : perCandidate
+    }
+
+    /// Whether a host is an address rather than a name, and so needs nothing resolved.
+    static func isLiteralAddress(_ host: String) -> Bool {
+        IPv4Address(host) != nil || IPv6Address(host) != nil
+    }
+
     /// Everything worth trying, best first.
     ///
     /// - Parameters:
@@ -99,7 +118,15 @@ enum BridgeEndpointResolver {
         if cellular {
             // A home address cannot answer from mobile data. Including it would spend the timeout
             // on something that cannot work.
-            found += privateOnes
+            //
+            // Numbers before names. A private network's addresses are fixed and need nothing looked
+            // up; its name needs the tunnel's own resolver, which on mobile data is one more thing
+            // to be brought up before anything can be tried. Both are offered - the name is what
+            // survives an address changing - but the one that cannot be delayed by DNS goes first,
+            // because each attempt here is now given eight seconds rather than two and a half.
+            found += privateOnes.sorted { left, right in
+                isLiteralAddress(left.name) && !isLiteralAddress(right.name)
+            }
         } else if preferLocal && !found.isEmpty {
             found += local + privateOnes
         } else {

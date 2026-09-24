@@ -111,6 +111,69 @@ final class BridgeEndpointResolverTests: XCTestCase {
         XCTAssertLessThanOrEqual(BridgeEndpointResolver.perCandidate, 5)
     }
 
+    // MARK: mobile data
+
+    func testMobileDataGetsLongerPerAddressThanWiFi() {
+        // Two and a half seconds is right when the list is long and the network is a LAN. On mobile
+        // data every local address has already been dropped, so the list is short and there is
+        // nothing else to spend the time on - and the radio bringing a data context up and a tunnel
+        // being established on demand are both slower than a handshake at home.
+        XCTAssertGreaterThan(
+            BridgeEndpointResolver.patience(cellular: true),
+            BridgeEndpointResolver.patience(cellular: false))
+
+        XCTAssertEqual(BridgeEndpointResolver.patience(cellular: false), BridgeEndpointResolver.perCandidate)
+    }
+
+    func testButNotSoLongThatSomebodyGivesUpFirst() {
+        // Three private addresses at this much each is the worst case, and it has to stay inside
+        // the patience of a person holding a phone.
+        XCTAssertLessThanOrEqual(BridgeEndpointResolver.perCandidateOnCellular * 3, 30)
+    }
+
+    func testOnMobileDataAnAddressIsTriedBeforeAName() {
+        // Each attempt now costs eight seconds, so the order matters in a way it did not. An
+        // address needs nothing looked up; the name needs the tunnel's own resolver, which on
+        // mobile data is one more thing that has to come up first.
+        let candidates = BridgeEndpointResolver.candidates(
+            for: pc(remoteHosts: ["dom-pc.tailnet-name.ts.net", "100.101.102.103", "fd7a:115c:a1e0::1"]),
+            discovered: [],
+            cellular: true)
+
+        let first = candidates.first?.name ?? ""
+
+        XCTAssertTrue(BridgeEndpointResolver.isLiteralAddress(first), "\(first) should not need DNS")
+        XCTAssertTrue(hosts(candidates).contains { $0.contains("tailnet-name") }, "the name is still worth trying")
+    }
+
+    func testAndTheNameIsStillOfferedBecauseAddressesCanChange() {
+        let candidates = BridgeEndpointResolver.candidates(
+            for: pc(remoteHosts: ["dom-pc.tailnet-name.ts.net", "100.101.102.103"]),
+            discovered: [],
+            cellular: true)
+
+        XCTAssertEqual(candidates.count, 2)
+    }
+
+    func testOnWiFiTheOrderThePcGaveIsKept() {
+        // The reason for the reshuffle is mobile data's, and nothing else should feel it: at home
+        // the name resolves instantly and is the one that survives an address changing.
+        let candidates = BridgeEndpointResolver.candidates(
+            for: pc(host: nil, remoteHosts: ["dom-pc.tailnet-name.ts.net", "100.101.102.103"], localHosts: nil),
+            discovered: [],
+            cellular: false,
+            preferLocal: false)
+
+        XCTAssertEqual(candidates.first?.name, "dom-pc.tailnet-name.ts.net")
+    }
+
+    func testWhatCountsAsAnAddressRatherThanAName() {
+        XCTAssertTrue(BridgeEndpointResolver.isLiteralAddress("100.101.102.103"))
+        XCTAssertTrue(BridgeEndpointResolver.isLiteralAddress("fd7a:115c:a1e0::cd01:e2ee"))
+        XCTAssertFalse(BridgeEndpointResolver.isLiteralAddress("dom-pc.tailnet-name.ts.net"))
+        XCTAssertFalse(BridgeEndpointResolver.isLiteralAddress(""))
+    }
+
     func testTheSamePairingWorksOnEveryAddress() {
         // Identity is cryptographic, not where it answered: the PC proves it holds the key this
         // phone pinned, on whichever address. Nothing in a candidate carries a key, a device id or
