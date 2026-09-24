@@ -2,13 +2,16 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The PC from the phone: what's playing and the volume, how it's running, what's open, power, the clipboard and
-/// files. Refreshes itself every few seconds while on screen.
+/// The house from the phone: the things that can be switched on and off at the top, then what's
+/// playing and the volume, how the PC is running, what's open, the clipboard and files. Refreshes
+/// itself every few seconds while on screen.
+///
+/// Power moved to each device's own page on 25 September, with the button that was missing beside
+/// it: turning the PC on. Two places to shut a PC down was one too many.
 struct ControlView: View {
     @EnvironmentObject var model: AppModel
     @StateObject private var control = ControlModel.shared
     @State private var openName = ""
-    @State private var confirm: String?
     @State private var photo: PhotosPickerItem?
     @State private var importing = false
     @State private var volumeDraft: Double?
@@ -17,6 +20,7 @@ struct ControlView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 14) {
+                    DevicesPanel()
                     mediaPanel
                     MacrosPanel()
                     ProgressPanel()
@@ -25,12 +29,11 @@ struct ControlView: View {
                     statsPanel
                     appsPanel
                     transferPanel
-                    powerPanel
                 }
                 .padding(16)
             }
             .background(HUD.background.ignoresSafeArea())
-            .navigationTitle("Control")
+            .navigationTitle("Home")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(HUD.panel, for: .navigationBar)
             .refreshable { await refreshAll() }
@@ -39,11 +42,6 @@ struct ControlView: View {
                 while !Task.isCancelled {
                     if model.link.isOnline { await refreshAll() }
                     try? await Task.sleep(nanoseconds: 3_000_000_000)
-                }
-            }
-            .confirmationDialog(confirmTitle, isPresented: Binding(get: { confirm != nil }, set: { if !$0 { confirm = nil } }), titleVisibility: .visible) {
-                if let action = confirm {
-                    Button(confirmButton(action), role: .destructive) { Task { await control.power(action) } }
                 }
             }
             .onChange(of: photo) { _, item in
@@ -275,39 +273,12 @@ struct ControlView: View {
     }
 
     // MARK: power
+    //
+    // The buttons were here and are now on the PC's own page, reached by tapping it at the top of
+    // this screen - together with the one that was missing, which is turning it on. Two places to
+    // shut a PC down is one place too many, and the wake button belongs beside the others rather
+    // than on a different screen from them.
 
-    private var powerPanel: some View {
-        HUDFrame(title: "Power", tint: HUD.alert) {
-            HStack(spacing: 10) {
-                Button("Lock") { Task { await model.securityAction("lock") } }.buttonStyle(HUDButtonStyle())
-                Button("Sleep") { confirm = "sleep" }.buttonStyle(HUDButtonStyle())
-            }
-            HStack(spacing: 10) {
-                Button("Restart") { confirm = "restart" }.buttonStyle(HUDButtonStyle(tint: HUD.amber))
-                Button("Shut down") { confirm = "shutdown" }.buttonStyle(HUDButtonStyle(tint: HUD.alert))
-            }
-            Button("Cancel restart / shut-down") { Task { await control.power("cancel") } }.buttonStyle(HUDButtonStyle(tint: HUD.good))
-            Text("Face ID every time. Restart and shut down wait 15 seconds, so Cancel can still stop them.")
-                .font(.footnote).foregroundStyle(HUD.dim)
-        }
-    }
-
-    private var confirmTitle: String {
-        switch confirm {
-        case "sleep": return "Put the PC to sleep?"
-        case "restart": return "Restart the PC?"
-        case "shutdown": return "Shut down the PC?"
-        default: return ""
-        }
-    }
-
-    private func confirmButton(_ action: String) -> String {
-        switch action {
-        case "sleep": return "Sleep"
-        case "restart": return "Restart"
-        default: return "Shut down"
-        }
-    }
 }
 
 /// A downloaded file, identified for the share sheet.

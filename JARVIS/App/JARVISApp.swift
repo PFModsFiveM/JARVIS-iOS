@@ -41,7 +41,7 @@ struct RootView: View {
                         .tabItem { Label("JARVIS", systemImage: "circle.hexagongrid") }
                         .tag("jarvis")
                     ControlView()
-                        .tabItem { Label("Control", systemImage: "slider.horizontal.3") }
+                        .tabItem { Label("Home", systemImage: "house") }
                         .tag("control")
                     ScreenView()
                         .tabItem { Label("PC", systemImage: "display") }
