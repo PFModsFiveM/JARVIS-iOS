@@ -90,6 +90,31 @@ struct SettingsView: View {
                         .font(.footnote).foregroundStyle(HUD.dim)
                 }
 
+                HUDFrame(title: "Where you are") {
+                    Toggle("Tell the PC where I am", isOn: Binding(
+                        get: { model.whereabouts.reporting },
+                        set: { on in on ? model.whereabouts.start() : model.whereabouts.stop() }))
+                        .tint(HUD.accent).foregroundStyle(HUD.text)
+
+                    if model.whereabouts.reporting {
+                        HStack {
+                            Text(model.whereabouts.lastReported.map { "Last sent \($0.formatted(date: .omitted, time: .shortened))" }
+                                 ?? "Nothing sent yet")
+                            Spacer()
+                            if model.whereabouts.waiting > 0 {
+                                Text("\(model.whereabouts.waiting) waiting")
+                            }
+                        }
+                        .font(.footnote).foregroundStyle(HUD.dim)
+                    } else if !model.whereabouts.authorised {
+                        Text("iOS will ask for location, and then ask again a little later whether JARVIS may have it all the time. The second one is the one that matters: without it JARVIS only knows where you are while this app is open.")
+                            .font(.footnote).foregroundStyle(HUD.dim)
+                    }
+
+                    Text("Your positions go to your own PC and nowhere else. iOS wakes JARVIS when you move a few hundred metres rather than tracking you continuously, which is why this costs almost no battery. Anything recorded while the PC is off waits on this phone and is sent when it comes back.")
+                        .font(.footnote).foregroundStyle(HUD.dim)
+                }
+
                 HUDFrame(title: "Alerts when JARVIS is closed") {
                     Toggle("Send alerts through ntfy", isOn: Binding(get: { model.alertsTopic != nil }, set: { on in Task { await model.setAlerts(on) } }))
                         .tint(HUD.accent).foregroundStyle(HUD.text)

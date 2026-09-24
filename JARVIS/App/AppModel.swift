@@ -127,6 +127,17 @@ final class AppModel: ObservableObject {
     let wake = WakeListener()
     let voice = Voice()
 
+    /// Where the phone is, for the PC that cannot see it.
+    ///
+    /// Off until the owner turns it on in Settings, because it asks for the always-on location
+    /// permission and that is not a thing to take quietly. It keeps what it cannot send, so a walk
+    /// taken while the PC was asleep is still a walk the PC learns about afterwards.
+    lazy var whereabouts = LocationReporter { [weak self] kind, body in
+        guard let self else { throw BridgeError.closed }
+
+        _ = try await self.session().request(kind, body)
+    }
+
     /// What the wake word is doing, mirrored here so the views watch this one object.
     @Published private(set) var wakePhase: WakeListener.Phase = .off
 
@@ -606,6 +617,10 @@ final class AppModel: ObservableObject {
         // older PC that does not know the request answers "failed" and this quietly does nothing,
         // which is exactly what should happen: the app keeps whatever it already had.
         if let reply = try? await client.request("network"), reply.kind == "network" { learnNetwork(reply.body) }
+
+        // Anything the phone recorded while the PC was off. Sent oldest first, and it stops at the
+        // first one that will not go rather than skipping it, so the PC's trail stays in order.
+        await whereabouts.flush()
     }
 
     // MARK: asking
