@@ -165,7 +165,7 @@ struct SettingsView: View {
             }
             .padding(20)
         }
-        .background(HUD.background.ignoresSafeArea())
+        .background(HUDBackdrop().ignoresSafeArea())
         .sheet(isPresented: $showingDiagnostics) { ConnectionDiagnosticsView() }
         .confirmationDialog("Forget this PC?", isPresented: $confirmForget, titleVisibility: .visible) {
             Button("Forget", role: .destructive) { Task { await model.forget() } }

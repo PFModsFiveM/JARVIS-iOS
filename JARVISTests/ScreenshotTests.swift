@@ -67,8 +67,26 @@ final class ScreenshotTests: XCTestCase {
 /// The screens worth looking at, each wrapped the way the app shows it.
 @MainActor
 enum Screens {
-    /// Whatever the screens need that the app model does not hold. Nothing, until there is.
-    static func seed() {}
+    /// Whatever the screens need that the app model does not hold: the smart-home devices, as the PC
+    /// would send them - the bedroom light on and confirmed, an office light not set up yet.
+    static func seed() {
+        SmartHomeModel.shared.apply(list: [
+            [
+                "id": "bedroom_main_light", "name": "Bedroom Light", "room": "Bedroom", "kind": "light",
+                "status": "on", "statusText": "On", "power": "on", "certainty": "confirmed",
+                "updating": false, "bound": true, "simulated": false, "battery": 87,
+                "capabilities": ["powerOn", "powerOff", "press", "battery"],
+                "readAt": ISO8601DateFormatter().string(from: Date().addingTimeInterval(-40)),
+                "lastCommand": "powerOn", "lastResult": "accepted"
+            ],
+            [
+                "id": "office_desk_lamp", "name": "Desk Lamp", "room": "Office", "kind": "light",
+                "status": "notSetUp", "statusText": "Not set up", "power": "unknown", "certainty": "unknown",
+                "updating": false, "bound": false, "simulated": false, "capabilities": ["powerOn", "powerOff", "press"],
+                "problem": "Desk Lamp isn't configured yet, sir."
+            ]
+        ], simulating: false)
+    }
 
     static var all: [(String, AnyView)] {
         [
@@ -76,7 +94,8 @@ enum Screens {
             ("02-home", AnyView(ControlView())),
             ("03-security", AnyView(SecurityView())),
             ("04-settings", AnyView(NavigationStack { SettingsView() })),
-            ("05-tabs", AnyView(RootView()))
+            ("05-tabs", AnyView(RootView())),
+            ("06-device", AnyView(NavigationStack { SmartDeviceView(id: "bedroom_main_light") }))
         ]
     }
 }

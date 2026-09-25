@@ -106,7 +106,7 @@ struct PairingView: View {
             }
             .padding(20)
         }
-        .background(HUD.background.ignoresSafeArea())
+        .background(HUDBackdrop().ignoresSafeArea())
         .onAppear { browser.start() }
         .onDisappear { browser.stop() }
     }

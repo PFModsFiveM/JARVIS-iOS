@@ -71,7 +71,7 @@ struct SecurityView: View {
             }
             .padding(20)
         }
-        .background(HUD.background.ignoresSafeArea())
+        .background(HUDBackdrop().ignoresSafeArea())
         .refreshable { await model.refresh() }
         .task { await model.refresh() }
         .confirmationDialog("Initiate the Security Protocol now?", isPresented: $confirmInitiate, titleVisibility: .visible) {

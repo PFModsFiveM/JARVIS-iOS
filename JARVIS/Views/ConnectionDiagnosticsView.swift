@@ -90,7 +90,7 @@ struct ConnectionDiagnosticsView: View {
             }
             .padding(20)
         }
-        .background(HUD.background.ignoresSafeArea())
+        .background(HUDBackdrop().ignoresSafeArea())
         .navigationTitle("Diagnostics")
     }
 

@@ -63,7 +63,7 @@ struct CapabilitiesView: View {
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
-            .background(HUD.background.ignoresSafeArea())
+            .background(HUDBackdrop().ignoresSafeArea())
             .searchable(text: $search, prompt: "Search what JARVIS can do")
             .navigationTitle("What JARVIS can do")
             .navigationBarTitleDisplayMode(.inline)

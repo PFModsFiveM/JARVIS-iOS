@@ -1098,6 +1098,7 @@ final class AppModel: ObservableObject {
         if message.kind == "screen.frame" { receiveFrame(message); return }
         if message.kind == "file.data" { ControlModel.shared.receiveFileData(message); return }
         if message.kind == "notice" { receiveNotice(message); return }
+        if message.kind == "devices.changed" { SmartHomeModel.shared.receive(message); return }
         if message.kind == "audio.frame" {
             if hearingPC, let pcm = message.text("pcm").flatMap({ Data(base64Encoded: $0) }) { pcAudio.play(pcm) }
             return

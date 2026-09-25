@@ -14,7 +14,7 @@ struct HomeView: View {
             conversation
             inputBar
         }
-        .background(HUD.background.ignoresSafeArea())
+        .background(HUDBackdrop().ignoresSafeArea())
         .sheet(isPresented: $showingAbilities) { CapabilitiesView() }
     }
 

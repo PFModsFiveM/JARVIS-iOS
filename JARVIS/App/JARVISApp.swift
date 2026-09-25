@@ -7,6 +7,10 @@ struct JARVISApp: App {
     @StateObject private var model = AppModel.shared
     @Environment(\.scenePhase) private var scenePhase
 
+    init() {
+        HUDChrome.apply()
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()

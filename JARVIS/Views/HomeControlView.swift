@@ -20,6 +20,9 @@ struct DevicesPanel: View {
 
     var body: some View {
         VStack(spacing: 14) {
+            // The lights and switches first: the thing somebody opens this tab to press.
+            SmartHomePanel()
+
             HUDFrame(title: "This PC") {
                 NavigationLink { DeviceControlView(device: pc) } label: { DeviceRow(device: pc) }
                     .buttonStyle(.plain)
@@ -37,7 +40,14 @@ struct DevicesPanel: View {
                 }
             }
         }
-        .task { await home.refresh() }
+        .task {
+            await home.refresh()
+            await SmartHomeModel.shared.refresh()
+        }
+        .onChange(of: model.link.isOnline) { _, online in
+            // Back online: the PC may have switched something while this phone could not hear it.
+            if online { Task { await SmartHomeModel.shared.refresh() } }
+        }
     }
 }
 
@@ -104,7 +114,7 @@ struct DeviceControlView: View {
                     }
                 }
 
-                HUDFrame(title: "Power", tint: HUD.alert) {
+                HUDFrame(title: "Power") {
                     ForEach(HomeControlModel.actions(for: live)) { action in
                         Button(action.title) {
                             if action.confirm == nil { run(action) } else { confirming = action }
@@ -126,7 +136,7 @@ struct DeviceControlView: View {
             }
             .padding(16)
         }
-        .background(HUD.background.ignoresSafeArea())
+        .background(HUDBackdrop().ignoresSafeArea())
         .navigationTitle(live.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(HUD.panel, for: .navigationBar)

@@ -49,7 +49,7 @@ struct ScreenView: View {
             buttons
         }
         .padding(12)
-        .background(HUD.background.ignoresSafeArea())
+        .background(HUDBackdrop().ignoresSafeArea())
         .task {
             await model.loadDisplays()
             if let primary = model.screenDisplays.first(where: { $0.primary }) { selected = primary.index }
@@ -72,7 +72,7 @@ struct ScreenView: View {
             }
             .padding(16)
             .presentationDetents([.medium, .large])
-            .background(HUD.background.ignoresSafeArea())
+            .background(HUDBackdrop().ignoresSafeArea())
         }
     }
 

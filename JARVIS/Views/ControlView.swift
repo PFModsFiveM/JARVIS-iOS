@@ -40,7 +40,7 @@ struct ControlView: View {
                 }
                 .padding(16)
             }
-            .background(HUD.background.ignoresSafeArea())
+            .background(HUDBackdrop().ignoresSafeArea())
             .navigationTitle("Home")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(HUD.panel, for: .navigationBar)
@@ -374,7 +374,7 @@ struct FilesView: View {
             .listRowBackground(HUD.panel)
         }
         .scrollContentBackground(.hidden)
-        .background(HUD.background.ignoresSafeArea())
+        .background(HUDBackdrop().ignoresSafeArea())
         .navigationTitle(title)
         .overlay(alignment: .bottom) {
             if let transfer = control.transfer {
