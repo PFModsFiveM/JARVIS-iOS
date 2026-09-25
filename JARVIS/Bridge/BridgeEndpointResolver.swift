@@ -108,7 +108,7 @@ enum BridgeEndpointResolver {
                 endpoint: .hostPort(host: NWEndpoint.Host(host), port: port),
                 describedAs: "\(host):\(pc.port)"))
         }
-        for host in pc.localHosts where host != pc.host {
+        for host in pc.localHosts ?? [] where host != pc.host {
             local.append(BridgeCandidate(
                 name: host, source: .lastKnownLocal,
                 endpoint: .hostPort(host: NWEndpoint.Host(host), port: port),
