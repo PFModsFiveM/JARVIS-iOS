@@ -15,17 +15,23 @@ enum LocalCapability: Equatable {
     /// this too, so the button, the voice command and whatever comes later are one action.
     case wake(target: String?)
 
+    /// Ask a machine what it is doing. Answerable while the PC is off, because the thing that
+    /// answers it is the pre-login service rather than JARVIS - and unanswerable any other way,
+    /// which is what puts it here rather than on the PC.
+    case state(target: String?)
+
     /// The capability's name, as the PC's own tool catalogue would write it.
     var action: String {
         switch self {
         case .wake: return "device.power.wake"
+        case .state: return "device.power.state"
         }
     }
 
     /// What the request was about, when it named something.
     var target: String? {
         switch self {
-        case .wake(let target): return target
+        case .wake(let target), .state(let target): return target
         }
     }
 
@@ -50,7 +56,11 @@ enum LocalCapability: Equatable {
         let machines = ["pc", "computer", "workstation", "desktop", "rig", "machine", "tower"]
 
         guard words.contains(where: { waking.contains($0) }), words.contains(where: { machines.contains($0) }) else {
-            return nil
+            // Not a request to switch something on. It may still be a question about one, which is
+            // the other thing that cannot be asked of a PC that is off.
+            return askingAboutAMachine(words, machines: machines)
+                ? .state(target: named(in: words, among: machines))
+                : nil
         }
 
         // "turn the computer off" and "shut the PC down" are the opposite request, and the PC can
@@ -70,11 +80,37 @@ enum LocalCapability: Equatable {
         return .wake(target: named(in: words, among: machines))
     }
 
+    /// Whether a sentence is asking what a machine is doing, rather than telling it to do something.
+    ///
+    /// Only questions. "Is my PC on" is a question this phone can answer while the PC is off; "turn
+    /// my PC on" is the request above, and "lock my PC" is the PC's own business. Requiring a
+    /// question word is what keeps those apart without a list of phrasings - and a sentence that is
+    /// neither goes to the PC, where the understanding lives.
+    private static func askingAboutAMachine(_ words: [String], machines: [String]) -> Bool {
+        let asking = ["is", "are", "was", "has", "does", "did", "whats", "what", "hows", "how", "status", "state"]
+
+        guard words.contains(where: { asking.contains($0) }) else { return false }
+        guard words.contains(where: { machines.contains($0) }) else { return false }
+
+        // The words that make it a question about its state rather than about anything else it
+        // might be doing - "is the PC rendering" is a question for the PC, which is awake to answer.
+        let about = ["on", "off", "awake", "asleep", "sleeping", "locked", "unlocked", "up", "down",
+                     "running", "doing", "status", "state", "signed"]
+
+        return words.contains(where: { about.contains($0) })
+    }
+
     /// The machine the sentence named, when it named one in particular.
     private static func named(in words: [String], among machines: [String]) -> String? {
         // "wake dom-pc" - a word that is none of ours and looks like a name.
         let ours = Set(["wake", "waken", "start", "boot", "power", "turn", "switch", "online", "on", "the", "my",
-                        "please", "up", "jarvis", "get"] + machines)
+                        "please", "up", "jarvis", "get",
+                        // The question's own words, so "is my pc locked" is about the pc and not
+                        // about something called "locked".
+                        "is", "are", "was", "has", "does", "did", "whats", "what", "hows", "how",
+                        "status", "state", "off", "awake", "asleep", "sleeping", "locked",
+                        "unlocked", "down", "running", "doing", "signed", "in", "anyone", "of"]
+                       + machines)
 
         return words.first { !ours.contains($0) && $0.count > 2 }
     }

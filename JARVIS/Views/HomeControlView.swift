@@ -9,13 +9,15 @@ import SwiftUI
 struct DevicesPanel: View {
     @EnvironmentObject var model: AppModel
     @StateObject private var home = HomeControlModel.shared
+    @StateObject private var machine = MachineLink.shared
 
     /// The PC as a row, from state this view is watching, so it redraws when the PC goes.
     private var pc: ControlledDevice {
         HomeControlModel.pc(
             name: model.pc?.serviceName,
             online: model.link.isOnline,
-            wakeable: model.wakeProfile.mac != nil)
+            wakeable: model.wakeProfile.mac != nil,
+            machine: machine.report)
     }
 
     var body: some View {
@@ -43,10 +45,19 @@ struct DevicesPanel: View {
         .task {
             await home.refresh()
             await SmartHomeModel.shared.refresh()
+
+            // Only when JARVIS itself is not answering. While it is, it says everything the service
+            // could and more, and opening a second connection to the same machine to be told what
+            // this phone already knows would be work for nothing.
+            if !model.link.isOnline { await machine.ask() }
         }
         .onChange(of: model.link.isOnline) { _, online in
             // Back online: the PC may have switched something while this phone could not hear it.
             if online { Task { await SmartHomeModel.shared.refresh() } }
+
+            // And off: ask the machine what happened to it, so the row can say whether it went to
+            // sleep or somebody just locked it.
+            if !online { Task { await machine.ask(force: true) } }
         }
     }
 }
@@ -69,8 +80,10 @@ private struct DeviceRow: View {
 
             Spacer()
 
+            // Three states, because there are three: answering, on but not answering, and nothing
+            // heard at all. Amber is the interesting one - the machine is there, JARVIS is not.
             Circle()
-                .fill(device.awake ? HUD.good : HUD.dim.opacity(0.4))
+                .fill(device.awake ? HUD.good : (device.powered ? HUD.amber : HUD.dim.opacity(0.4)))
                 .frame(width: 8, height: 8)
 
             Image(systemName: "chevron.right").font(.footnote).foregroundStyle(HUD.dim)
@@ -86,13 +99,18 @@ struct DeviceControlView: View {
 
     @EnvironmentObject var model: AppModel
     @StateObject private var home = HomeControlModel.shared
+    @StateObject private var machine = MachineLink.shared
     @State private var confirming: DeviceAction?
 
     /// The device as it is now. For the PC that is whatever the app model currently says, so the
     /// page comes alive the moment it answers rather than showing what it was when it was opened.
     private var live: ControlledDevice {
         device.kind == .pc
-            ? HomeControlModel.pc(name: model.pc?.serviceName, online: model.link.isOnline, wakeable: model.wakeProfile.mac != nil)
+            ? HomeControlModel.pc(
+                name: model.pc?.serviceName,
+                online: model.link.isOnline,
+                wakeable: model.wakeProfile.mac != nil,
+                machine: machine.report)
             : device
     }
 
@@ -101,11 +119,21 @@ struct DeviceControlView: View {
             VStack(spacing: 14) {
                 HUDFrame(title: live.name) {
                     HStack {
-                        Text(live.awake ? "Awake and answering" : "Not answering")
-                            .foregroundStyle(live.awake ? HUD.good : HUD.dim)
+                        Text(live.awake ? "Awake and answering" : live.detail)
+                            .foregroundStyle(live.awake ? HUD.good : (live.powered ? HUD.amber : HUD.dim))
                         Spacer()
+
+                        if machine.asking { ProgressView().tint(HUD.accent) }
                     }
                     .font(.footnote)
+
+                    // Where that came from, when it did not come from JARVIS. Worth saying: it is
+                    // the difference between JARVIS knowing and the machine being asked about
+                    // itself, and they are not equally informed.
+                    if !live.awake, live.kind == .pc, let report = machine.report {
+                        Text("The machine itself says: \(report.described).")
+                            .font(.footnote).foregroundStyle(HUD.dim)
+                    }
 
                     // The PC's own page only: wakeState is about this phone waking the PC, and
                     // showing it under another machine's name would credit it with the wrong event.
@@ -137,6 +165,9 @@ struct DeviceControlView: View {
             .padding(16)
         }
         .background(HUDBackdrop().ignoresSafeArea())
+        .task {
+            if device.kind == .pc, !model.link.isOnline { await machine.ask() }
+        }
         .hudTitle(live.name)
         .toolbarBackground(HUD.panel, for: .navigationBar)
         .confirmationDialog(

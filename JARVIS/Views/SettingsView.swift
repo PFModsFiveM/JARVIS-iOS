@@ -17,14 +17,21 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 16) {
                 HUDLabel(text: "Settings", color: HUD.accent).padding(.top, 8)
 
-                HUDFrame(title: "PC") {
-                    row("Name", model.pcName)
-                    row("Version", model.status["version"] as? String ?? "-")
-                    row("Key", model.pc?.fingerprint ?? "-")
-                    Text("The key must match the one on the PC's Settings › iPhone page.")
-                        .font(.footnote).foregroundStyle(HUD.dim)
-                    Button("Reconnect") { Task { await model.disconnect(); await model.connect() } }
-                        .buttonStyle(HUDButtonStyle())
+                // Grouped, and not for tidiness: a VStack takes ten children and this one is full,
+                // so the eleventh would not compile. Two panels about the same machine are the
+                // right two to fold together.
+                Group {
+                    HUDFrame(title: "PC") {
+                        row("Name", model.pcName)
+                        row("Version", model.status["version"] as? String ?? "-")
+                        row("Key", model.pc?.fingerprint ?? "-")
+                        Text("The key must match the one on the PC's Settings › iPhone page.")
+                            .font(.footnote).foregroundStyle(HUD.dim)
+                        Button("Reconnect") { Task { await model.disconnect(); await model.connect() } }
+                            .buttonStyle(HUDButtonStyle())
+                    }
+
+                    BeforeSignInPanel()
                 }
 
                 HUDFrame(title: "Waking \(model.wakeProfile.deviceName)") {

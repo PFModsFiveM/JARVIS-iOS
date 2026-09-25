@@ -24,8 +24,16 @@ struct ControlledDevice: Identifiable, Equatable {
     /// Where it was last seen, for the second line. Empty when there is nothing useful to say.
     let detail: String
 
-    /// Whether JARVIS believes it is on and reachable now.
+    /// Whether JARVIS believes it is on and reachable now - that is, whether it can be asked to do
+    /// anything. A locked PC is powered but not awake in this sense.
     let awake: Bool
+
+    /// Whether the machine itself is on, which is not the same thing.
+    ///
+    /// The pre-login service answers this when desktop JARVIS cannot: a PC that is locked, or that
+    /// nobody has signed in to, is on and worth showing as on - pressing "turn on" would do
+    /// nothing, and a row that says "Not answering" invites exactly that.
+    let powered: Bool
 
     /// Whether it can be switched on from here at all - it needs a network card JARVIS knows.
     let wakeable: Bool
@@ -75,13 +83,31 @@ final class HomeControlModel: ObservableObject {
     ///
     /// Always present, even when it is off - that is exactly when somebody wants to switch it on,
     /// and a list that hides the thing you came to press has missed the point.
-    nonisolated static func pc(name: String?, online: Bool, wakeable: Bool) -> ControlledDevice {
-        ControlledDevice(
+    /// - Parameter machine: what the pre-login service last said, when it has been asked. It is
+    ///   what turns "Not answering" into "On, nobody signed in" - the difference between a machine
+    ///   somebody should switch on and one they should sign in to.
+    nonisolated static func pc(
+        name: String?,
+        online: Bool,
+        wakeable: Bool,
+        machine: MachineReport? = nil
+    ) -> ControlledDevice {
+        let detail: String
+        if online {
+            detail = "Awake"
+        } else if let machine {
+            detail = machine.summary
+        } else {
+            detail = "Not answering"
+        }
+
+        return ControlledDevice(
             id: "pc",
             name: name?.isEmpty == false ? name! : "Your PC",
             kind: .pc,
-            detail: online ? "Awake" : "Not answering",
+            detail: detail,
             awake: online,
+            powered: online || machine != nil,
             wakeable: wakeable)
     }
 
@@ -186,6 +212,7 @@ final class HomeControlModel: ObservableObject {
                 kind: .machine,
                 detail: address.isEmpty ? "On your network" : "Last seen at \(address)",
                 awake: false,
+                powered: false,
                 wakeable: true)
         }
     }

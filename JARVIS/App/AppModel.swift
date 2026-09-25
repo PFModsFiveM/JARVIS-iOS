@@ -611,8 +611,36 @@ final class AppModel: ObservableObject {
         }
 
         route = nil
-        link = .offline(lastError.localizedDescription)
+        link = .offline(await machineSaysWhy(lastError))
         scheduleReconnect()
+    }
+
+    /// Why the desktop did not answer, asked of the machine itself when it can be.
+    ///
+    /// "The PC did not answer in time" is true and nearly useless: it is the same sentence whether
+    /// the machine is asleep, or on with nobody signed in, or on and locked with JARVIS not
+    /// running. The pre-login service knows which, and answering that is most of the reason it
+    /// exists - so when the desktop cannot be reached, it is asked, and what it says is what the
+    /// owner is told.
+    private func machineSaysWhy(_ failure: Error) async -> String {
+        guard MachineLink.shared.isPaired, let report = await MachineLink.shared.ask(force: true) else {
+            return failure.localizedDescription
+        }
+
+        switch report.session {
+        case .nobodySignedIn:
+            return "\(report.machine) is on, but nobody has signed in yet, so JARVIS is not running."
+        case .locked:
+            return report.desktopRunning
+                ? "\(report.machine) is locked. JARVIS is running and will answer once it is unlocked."
+                : "\(report.machine) is locked and JARVIS is not running."
+        case .inUse:
+            return report.desktopRunning
+                ? "\(report.machine) is awake and JARVIS is running, but this phone could not reach it: \(failure.localizedDescription)"
+                : "\(report.machine) is awake, but JARVIS is not running on it."
+        case .unknown:
+            return "\(report.machine) is on, but could not say what it is doing."
+        }
     }
 
     /// Saves the PC's away-from-home address (Tailscale), or clears it with an empty string.
@@ -801,6 +829,16 @@ final class AppModel: ObservableObject {
             return
         }
 
+        // And the other thing a sleeping PC cannot be asked: what it is doing. The pre-login
+        // service can answer it when JARVIS cannot, and when JARVIS can, it goes to JARVIS - which
+        // knows everything the service does and a great deal more.
+        if case .state = LocalCapability.of(request), !link.isOnline {
+            let answer = await machineAnswer()
+            lines.append(ChatLine(speaker: .jarvis, text: answer))
+            if speakAnswers || spoken { voice.say(answer) }
+            return
+        }
+
         thinking = true
         defer { thinking = false }
 
@@ -822,6 +860,35 @@ final class AppModel: ObservableObject {
             }
         } catch {
             lines.append(ChatLine(speaker: .system, text: error.localizedDescription))
+        }
+    }
+
+    /// What to say when asked what the PC is doing and JARVIS is not there to be asked.
+    ///
+    /// Spoken as the machine's own report rather than as a diagnosis: the service says what Windows
+    /// is doing, and anything beyond that would be this phone guessing on its behalf.
+    func machineAnswer() async -> String {
+        guard MachineLink.shared.isPaired else {
+            return "I can't tell while JARVIS isn't running. Pair this phone with the PC's service and I'll be able to say whether it's off, locked, or just not signed in."
+        }
+
+        guard let report = await MachineLink.shared.ask(force: true) else {
+            return "I can't reach \(pcName) at all, so it's either off or not on a network I can see from here."
+        }
+
+        switch report.session {
+        case .nobodySignedIn:
+            return "\(report.machine) is on, but nobody has signed in yet, so JARVIS isn't running."
+        case .locked:
+            return report.desktopRunning
+                ? "\(report.machine) is locked. JARVIS is running and will answer once you unlock it."
+                : "\(report.machine) is locked, and JARVIS isn't running on it."
+        case .inUse:
+            return report.desktopRunning
+                ? "\(report.machine) is awake and JARVIS is running - I just couldn't reach it from here."
+                : "\(report.machine) is awake, but JARVIS isn't running on it."
+        case .unknown:
+            return "\(report.machine) is on, but it couldn't say what it's doing."
         }
     }
 
@@ -1197,6 +1264,11 @@ final class AppModel: ObservableObject {
 
     func forget() async {
         await disconnect()
+
+        // The service's pairing goes with it. It is the same machine, and forgetting the PC throws
+        // away the Secure Enclave keys both pairings are built on, so leaving the service's record
+        // behind would leave a key that can no longer be used and a row that can never connect.
+        MachineLink.shared.forget()
         PairedPC.forget()
         pc = nil
         status = [:]

@@ -9,11 +9,11 @@ import XCTest
 /// "turn on" because the PC was not answering, would be a panel that lies about what it can do.
 final class HomeControlTests: XCTestCase {
     private func pc(awake: Bool = true, wakeable: Bool = true) -> ControlledDevice {
-        ControlledDevice(id: "pc", name: "DOM-PC", kind: .pc, detail: "", awake: awake, wakeable: wakeable)
+        ControlledDevice(id: "pc", name: "DOM-PC", kind: .pc, detail: "", awake: awake, powered: awake, wakeable: wakeable)
     }
 
     private func machine(_ name: String = "the server") -> ControlledDevice {
-        ControlledDevice(id: "machine:\(name)", name: name, kind: .machine, detail: "", awake: false, wakeable: true)
+        ControlledDevice(id: "machine:\(name)", name: name, kind: .machine, detail: "", awake: false, powered: false, wakeable: true)
     }
 
     // MARK: what each kind of thing can do

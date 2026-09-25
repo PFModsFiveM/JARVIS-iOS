@@ -158,4 +158,27 @@ enum BridgeEndpointResolver {
         var seen = Set<String>()
         return found.filter { seen.insert($0.describedAs).inserted }
     }
+
+    /// Where the same machine's pre-login service might be, in the order worth trying.
+    ///
+    /// The same addresses as the PC, on the service's own port. Built from the PC's record rather
+    /// than from a second list, because it is the same machine: one list that the PC keeps up to
+    /// date beats two, one of which would go stale.
+    ///
+    /// Bonjour is left out, and not by oversight. What the PC advertises is desktop JARVIS - the
+    /// name resolves to the desktop's port - so a Bonjour candidate here would dial the desktop and
+    /// present the service's key to it, which is exactly the confusion pinning exists to catch. The
+    /// service is reached by address, or not at all.
+    static func serviceCandidates(
+        for pc: PairedPC,
+        port: UInt16,
+        cellular: Bool,
+        preferLocal: Bool = true
+    ) -> [BridgeCandidate] {
+        var machine = pc
+        machine.port = port
+        machine.serviceName = nil
+
+        return candidates(for: machine, discovered: [], cellular: cellular, preferLocal: preferLocal)
+    }
 }
