@@ -67,7 +67,11 @@ struct SmartDeviceTile: View {
 
                 Spacer(minLength: 8)
 
-                HUDLabel(text: word, color: tint)
+                // Tracked rather than spaced letter by letter: a status word has to leave the name room.
+                Text(word.uppercased())
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .kerning(1.6)
+                    .foregroundStyle(tint)
                     .lineLimit(1)
                     .fixedSize()
             }

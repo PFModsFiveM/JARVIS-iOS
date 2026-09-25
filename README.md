@@ -58,6 +58,13 @@ private networks when asked), press *Pair an iPhone*, and approve when the six d
   only; nothing is sent until it hears the name and a request, and then only to your PC. With the `audio`
   background mode it keeps listening with the app in the background or the phone locked, while the orange
   microphone dot shows.
+- **Smart home** (Home tab): the house's lights and switches - today the Bedroom Light, a SwitchBot Bot on the
+  rocker - one tile per device, grouped by room. ON and OFF switch it through the PC, UPDATING shows while the
+  command is out, and "On (unconfirmed)" means the command was accepted but the device has not yet said so. A
+  change made anywhere - the PC's HUD, the voice, another phone - is pushed here as it happens. The phone never
+  holds a SwitchBot token, secret or device id: it asks the PC, and the PC's Device Service talks to SwitchBot.
+  So with the PC off nothing can be switched from here, and the tile says so; wake the PC first. The PC side,
+  including setting up the hardware, is `docs/SMART-HOME-AND-SWITCHBOT.md` in the J.A.R.V.I.S repository.
 - **Security Protocol**: live status (learning, armed, challenge with countdown and attempts), Arm, Test,
   Initiate, Lock PC, Stand down.
 - **Challenge alerts**: when someone is challenged at your PC, a notification with *It's me (Face ID)* and
