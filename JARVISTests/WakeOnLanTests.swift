@@ -14,6 +14,35 @@ final class WakeOnLanTests: XCTestCase {
     /// The owner's workstation, as its card and router are actually configured.
     private static let domPc = "04-7C-16-4E-A7-F5"
 
+    // MARK: a card typed by hand
+
+    func testACardTypedByHandIsKeptWhenThePcLaterSaysSomethingElse() {
+        // The hole in learning it from the PC: a machine that has been off since the app was
+        // installed never tells the phone anything, so the one button that would switch it on is
+        // the one button unavailable. Somebody who typed it did so because this was not working,
+        // and the next successful connection must not quietly undo them.
+        var typed = profile()
+        typed.typedByHand = true
+
+        XCTAssertNotNil(typed.mac)
+        XCTAssertEqual(typed.typedByHand, true)
+    }
+
+    func testAProfileSavedBeforeThatFieldExistedStillReads() {
+        // A phone paired for a month has a stored profile with no such key in it. Losing its wake
+        // settings to a new field would be a bug introduced by fixing one.
+        let old = """
+        {"deviceName":"DOM-PC","broadcast":"192.168.1.255","port":9,"remoteHost":"","remotePort":40009,
+         "enabled":true,"overCellular":true}
+        """
+
+        let read = try? JSONDecoder().decode(WakeProfile.self, from: Data(old.utf8))
+
+        XCTAssertNotNil(read)
+        XCTAssertNil(read?.typedByHand)
+        XCTAssertEqual(read?.broadcast, "192.168.1.255")
+    }
+
     private func profile(mac: String? = domPc, remote: String = "home.example-ddns.test") -> WakeProfile {
         WakeProfile(
             deviceName: "DOM-PC", mac: mac.flatMap { MacAddress($0) }, broadcast: "192.168.1.255", port: 9,

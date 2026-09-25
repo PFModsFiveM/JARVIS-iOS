@@ -383,7 +383,12 @@ final class AppModel: ObservableObject {
         if let wake = body["wake"] as? [String: Any] {
             var profile = wakeProfile
             profile.deviceName = (body["machine"] as? String) ?? profile.deviceName
-            if let mac = MacAddress(wake["mac"] as? String) { profile.mac = mac }
+            // What the owner typed wins. The PC is usually right and is right more often than a
+            // person typing hex - but somebody who typed it did so because this was not working,
+            // and quietly replacing it would take the fix away while looking like nothing happened.
+            if let mac = MacAddress(wake["mac"] as? String), profile.typedByHand != true || profile.mac == nil {
+                profile.mac = mac
+            }
             if let broadcast = wake["broadcast"] as? String, !broadcast.isEmpty { profile.broadcast = broadcast }
             if let port = wake["port"] as? Int, let port = UInt16(exactly: port) { profile.port = port }
 
@@ -400,6 +405,42 @@ final class AppModel: ObservableObject {
             wakeProfile = profile
             note("network: \(remote.count) remote, \(local.count) local, wake \(profile.mac == nil ? "unavailable" : profile.mac!.description)")
         }
+    }
+
+    /// Takes a card address and a broadcast address typed by hand.
+    ///
+    /// Everything else about waking is learnt: the PC reads its own card and tells the phone over
+    /// the bridge, so there is nothing to type and nothing to get wrong. That is the right default
+    /// and it has one hole in it - the phone has to have connected to the PC at least once, which
+    /// it cannot do if the PC has been off ever since the app was installed. The wake button is
+    /// then unavailable for exactly the machine somebody wants to switch on.
+    ///
+    /// So the two facts can be typed. They are on the PC's own `SpeechDiag network` screen, and on
+    /// any router's page. What is typed is kept: a later connection fills in what is still empty
+    /// rather than overwriting an address somebody went to the trouble of entering.
+    ///
+    /// Returns what was wrong, or nil when it took.
+    func setWakeCard(mac: String, broadcast: String) -> String? {
+        let typed = mac.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let card = MacAddress(typed) else {
+            return "That is not a card address. Six pairs of hex digits, like 04-7C-16-4E-A7-F5."
+        }
+
+        let where_ = broadcast.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // A broadcast address ends in 255 on every home network there is. Not enforced - somebody
+        // with an unusual mask knows more about their network than this does - but worth saying.
+        var profile = wakeProfile
+        profile.mac = card
+        if !where_.isEmpty { profile.broadcast = where_ }
+        profile.typedByHand = true
+        profile.save()
+        wakeProfile = profile
+
+        note("wake: card typed by hand")
+
+        return nil
     }
 
     /// Saves what the owner typed for waking the PC from outside, and keeps the rest as the PC said it.

@@ -88,6 +88,13 @@ struct WakeProfile: Codable, Equatable {
     var overCellular: Bool
     var lastAttempt: Date?
 
+    /// Whether the card address came from the owner rather than from the PC.
+    ///
+    /// Kept so that the next connection does not overwrite it. Optional in the stored shape because
+    /// profiles saved before this existed have no such key, and a phone that has been paired for a
+    /// month should not lose its wake settings to a new field.
+    var typedByHand: Bool? = nil
+
     static let `default` = WakeProfile(
         deviceName: "PC", mac: nil, broadcast: "", port: 9,
         remoteHost: "", remotePort: 40009, enabled: true, overCellular: true, lastAttempt: nil)

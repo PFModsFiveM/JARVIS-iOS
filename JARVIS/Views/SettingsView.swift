@@ -2,6 +2,9 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var model: AppModel
+    @State private var wakeMac = ""
+    @State private var wakeBroadcast = ""
+    @State private var wakeCardProblem: String?
     @State private var confirmForget = false
     @State private var showingDiagnostics = false
     @State private var selfTest: [(name: String, passed: Bool)] = []
@@ -31,9 +34,33 @@ struct SettingsView: View {
                     if let mac = model.wakeProfile.mac {
                         row("MAC", mac.description)
                         row("From home", "\(model.wakeProfile.broadcast):\(model.wakeProfile.port)")
+
+                        if model.wakeProfile.typedByHand == true {
+                            Text("Typed by hand, and kept: connecting to the PC will not overwrite it.")
+                                .font(.footnote).foregroundStyle(HUD.dim)
+                        }
                     } else {
-                        Text("Not set up yet. Connect to the PC once at home and it will tell this phone its card's address and the home network's broadcast address - there is nothing to type.")
+                        Text("Connect to the PC once at home and it tells this phone its card's address and the home network's broadcast address - there is nothing to type.")
                             .font(.footnote).foregroundStyle(HUD.dim)
+
+                        // The one case the learnt-from-the-PC route cannot cover: a PC that has been
+                        // off ever since the app was installed. The phone has nothing to connect to,
+                        // so it never learns the card, so the button to switch the PC on is the one
+                        // button that is unavailable - for exactly the machine somebody wants on.
+                        Text("If it has been off the whole time, type them instead. Both are on the PC's own `SpeechDiag network` screen, and on your router's page.")
+                            .font(.footnote).foregroundStyle(HUD.dim).padding(.top, 4)
+
+                        field("Card address (04-7C-16-4E-A7-F5)", text: $wakeMac, keyboard: .asciiCapable)
+                        field("Home broadcast address (192.168.1.255)", text: $wakeBroadcast, keyboard: .numbersAndPunctuation)
+
+                        Button("Save the card") {
+                            wakeCardProblem = model.setWakeCard(mac: wakeMac, broadcast: wakeBroadcast)
+                        }
+                        .buttonStyle(HUDButtonStyle())
+
+                        if let problem = wakeCardProblem {
+                            Text(problem).font(.footnote).foregroundStyle(HUD.alert)
+                        }
                     }
 
                     Text("From outside the house").font(.footnote).foregroundStyle(HUD.dim).padding(.top, 4)
