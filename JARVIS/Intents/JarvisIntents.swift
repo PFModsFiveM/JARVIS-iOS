@@ -332,6 +332,11 @@ struct WakePCIntent: AppIntent {
 // MARK: - Siri phrases
 
 /// At most ten appear as Siri phrases; every intent above is in the Shortcuts app either way.
+///
+/// Ten is not advice. The build fails outright with "Found 11 App Shortcuts, but each app may have
+/// at most 10", and the eleventh had been sitting here since 23 September keeping the whole app
+/// from compiling. Watching the screen is the one that went: every other phrase here does
+/// something while the phone stays in a pocket, and that one ends with looking at it anyway.
 struct JarvisShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: AskJarvisIntent(), phrases: ["Ask \(.applicationName)", "Talk to \(.applicationName)"],
@@ -350,8 +355,6 @@ struct JarvisShortcuts: AppShortcutsProvider {
                     shortTitle: "Open on PC", systemImageName: "macwindow")
         AppShortcut(intent: RunMacroIntent(), phrases: ["Run \(\.$macro) with \(.applicationName)", "\(.applicationName) run \(\.$macro)"],
                     shortTitle: "Run macro", systemImageName: "sparkles")
-        AppShortcut(intent: WatchPCIntent(), phrases: ["Watch my PC with \(.applicationName)", "\(.applicationName) show my screen"],
-                    shortTitle: "Watch PC", systemImageName: "display")
         AppShortcut(intent: WakePCIntent(),
                     phrases: ["\(.applicationName) wake my PC", "Wake my PC with \(.applicationName)",
                               "\(.applicationName) turn my computer on", "\(.applicationName) start my PC"],
