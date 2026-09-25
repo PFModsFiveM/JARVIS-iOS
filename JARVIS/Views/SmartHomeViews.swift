@@ -68,6 +68,8 @@ struct SmartDeviceTile: View {
                 Spacer(minLength: 8)
 
                 HUDLabel(text: word, color: tint)
+                    .lineLimit(1)
+                    .fixedSize()
             }
 
             if device.canSwitch {
@@ -147,20 +149,23 @@ struct PowerSwitch: View {
                 Sweep().frame(height: 2)
             }
         }
-        .opacity(enabled || device.shown == .updating ? 1 : 0.45)
         .disabled(!enabled)
     }
 
+    /// One side. While the switch can be used, the side matching the state is solid light with dark
+    /// type. While it cannot - the PC is away, or a command is out - the state still has to be readable,
+    /// so the lit side keeps bright type on a faint wash and only the other side fades back.
     private func side(_ label: String, lit: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(HUD.spaced(label))
                 .font(.system(size: 12, weight: .bold, design: .monospaced))
-                .foregroundStyle(lit ? HUD.background : HUD.accent)
+                .foregroundStyle(lit ? (enabled ? HUD.background : HUD.bright) : HUD.accent)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 11)
-                .background(lit ? HUD.accent : HUD.accent.opacity(0.06))
-                .overlay(Rectangle().stroke(HUD.accent.opacity(lit ? 1 : 0.45), lineWidth: 1))
-                .shadow(color: lit ? HUD.accent.opacity(0.55) : .clear, radius: 8)
+                .background(lit ? (enabled ? HUD.accent : HUD.accent.opacity(0.18)) : HUD.accent.opacity(0.05))
+                .overlay(Rectangle().stroke(HUD.accent.opacity(lit ? (enabled ? 1 : 0.6) : 0.35), lineWidth: 1))
+                .shadow(color: lit && enabled ? HUD.accent.opacity(0.55) : .clear, radius: 8)
+                .opacity(lit || enabled ? 1 : 0.4)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(device.name) \(label)")
@@ -296,8 +301,7 @@ struct SmartDeviceView: View {
             }
         }
         .hudScreen()
-        .navigationTitle(device?.name ?? "Device")
-        .navigationBarTitleDisplayMode(.inline)
+        .hudTitle(device?.name ?? "Device")
         .refreshable { await home.refresh(id) }
         .task { await home.refresh(id) }
     }

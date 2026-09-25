@@ -57,6 +57,9 @@ struct RootView: View {
                         .tabItem { Label("Settings", systemImage: "gearshape") }
                         .tag("settings")
                 }
+                // One tint for the whole app, so every toggle, slider and selected tab is the HUD's
+                // cyan rather than the system blue or green.
+                .tint(HUD.accent)
                 .task {
                     LiveActivity.shared.start()
                     await model.connect()

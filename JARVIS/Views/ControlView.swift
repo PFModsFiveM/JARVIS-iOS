@@ -41,8 +41,7 @@ struct ControlView: View {
                 .padding(16)
             }
             .background(HUDBackdrop().ignoresSafeArea())
-            .navigationTitle("Home")
-            .navigationBarTitleDisplayMode(.inline)
+            .hudTitle("Home")
             .toolbarBackground(HUD.panel, for: .navigationBar)
             .refreshable { await refreshAll() }
             .task {
@@ -375,7 +374,7 @@ struct FilesView: View {
         }
         .scrollContentBackground(.hidden)
         .background(HUDBackdrop().ignoresSafeArea())
-        .navigationTitle(title)
+        .hudTitle(title)
         .overlay(alignment: .bottom) {
             if let transfer = control.transfer {
                 VStack(alignment: .leading, spacing: 4) {

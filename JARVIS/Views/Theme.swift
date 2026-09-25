@@ -154,6 +154,25 @@ struct HUDBackdrop: View {
 }
 
 extension View {
+    /// A navigation title in the HUD's type: small spaced capitals in the accent, centred, instead of the
+    /// system's bold white. The plain title is still set, for the back button and accessibility.
+    func hudTitle(_ title: String) -> some View {
+        navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(title.uppercased())
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .kerning(3)
+                        .foregroundStyle(HUD.accent)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .shadow(color: HUD.accent.opacity(0.5), radius: 4)
+                        .accessibilityAddTraits(.isHeader)
+                }
+            }
+    }
+
     /// A full screen in the HUD's clothes: the backdrop behind it and a dark navigation bar over it.
     func hudScreen() -> some View {
         background(HUDBackdrop().ignoresSafeArea())
@@ -186,6 +205,11 @@ enum HUDChrome {
         tabs.compactInlineLayoutAppearance = item
         UITabBar.appearance().standardAppearance = tabs
         UITabBar.appearance().scrollEdgeAppearance = tabs
+        // The item appearance above is not read by every tab bar style (the floating glass bar of
+        // recent iOS ignores it); these two are, so unselected items are dim cyan there too.
+        UITabBar.appearance().unselectedItemTintColor = UIColor(HUD.dim)
+        UITabBar.appearance().tintColor = UIColor(HUD.accent)
+        UISwitch.appearance().onTintColor = UIColor(HUD.accent)
 
         let bar = UINavigationBarAppearance()
         bar.configureWithOpaqueBackground()

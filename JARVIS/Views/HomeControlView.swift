@@ -137,8 +137,7 @@ struct DeviceControlView: View {
             .padding(16)
         }
         .background(HUDBackdrop().ignoresSafeArea())
-        .navigationTitle(live.name)
-        .navigationBarTitleDisplayMode(.inline)
+        .hudTitle(live.name)
         .toolbarBackground(HUD.panel, for: .navigationBar)
         .confirmationDialog(
             confirming?.confirm ?? "",

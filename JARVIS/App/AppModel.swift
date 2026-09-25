@@ -259,6 +259,12 @@ final class AppModel: ObservableObject {
     /// Set while a wake is in flight, and cleared the moment the bridge comes up or the wait ends.
     @Published private(set) var wakeState: DeviceState?
 
+    #if DEBUG
+    /// Set by the screenshot tests' showcase only: the model keeps the state it was given and does not
+    /// dial out, so a screen drawn in CI shows the connected look rather than a reconnect in progress.
+    var showcasing = false
+    #endif
+
     /// What this phone knows about waking the PC. Told to it by the PC; never typed unless the owner insists.
     @Published var wakeProfile = WakeProfile.load()
 
@@ -489,6 +495,9 @@ final class AppModel: ObservableObject {
     /// `perCandidate` seconds rather than twelve: an address that cannot be reached from this
     /// network does not fail, it waits, so the timeout is the thing that moves on to the next one.
     private func connectNow() async {
+        #if DEBUG
+        if showcasing { return }
+        #endif
         guard let pc else { link = .unpaired; return }
         if let client, await client.isOpen, link.isOnline { return }
 
@@ -1237,6 +1246,7 @@ extension AppModel {
     /// and a short conversation. Debug builds only, and called from nowhere but the tests - a release
     /// build does not contain it, so it cannot put pretend state in front of anybody.
     func showcase(pcName: String, lines script: [(ChatLine.Speaker, String)]) {
+        showcasing = true
         link = .online(pcName)
         lines = script.map { ChatLine(speaker: $0.0, text: $0.1) }
     }

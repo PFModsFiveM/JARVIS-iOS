@@ -91,7 +91,7 @@ struct ConnectionDiagnosticsView: View {
             .padding(20)
         }
         .background(HUDBackdrop().ignoresSafeArea())
-        .navigationTitle("Diagnostics")
+        .hudTitle("Diagnostics")
     }
 
     private var candidates: [BridgeCandidate] {

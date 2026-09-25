@@ -186,15 +186,30 @@ private struct Bubble: View {
             if line.speaker == .you { Spacer(minLength: 40) }
             VStack(alignment: .leading, spacing: 4) {
                 HUDLabel(text: line.speaker == .you ? "You" : line.speaker == .jarvis ? "Jarvis" : "System",
-                         color: line.speaker == .system ? HUD.amber : HUD.dim)
+                         color: tint)
                 Text(line.text)
                     .foregroundStyle(line.speaker == .system ? HUD.amber : HUD.text)
                     .textSelection(.enabled)
             }
             .padding(12)
-            .background(line.speaker == .you ? HUD.accent.opacity(0.12) : HUD.panel)
-            .overlay(Rectangle().stroke((line.speaker == .you ? HUD.accent : HUD.dim).opacity(0.35), lineWidth: 1))
+            // JARVIS is the lit voice - an accent edge with a light at its start, like a line on the
+            // PC's comm log - and you are the quiet one, etched in the hairline colour.
+            .background(line.speaker == .jarvis ? HUD.accent.opacity(0.06) : HUD.panel.opacity(0.85))
+            .overlay(Rectangle().stroke(line.speaker == .jarvis ? HUD.accent.opacity(0.35) : HUD.line, lineWidth: 1))
+            .overlay(alignment: .leading) {
+                if line.speaker == .jarvis {
+                    Rectangle().fill(HUD.accent).frame(width: 2).shadow(color: HUD.accent.opacity(0.7), radius: 3)
+                }
+            }
             if line.speaker != .you { Spacer(minLength: 40) }
+        }
+    }
+
+    private var tint: Color {
+        switch line.speaker {
+        case .jarvis: return HUD.accent
+        case .system: return HUD.amber
+        default: return HUD.dim
         }
     }
 }
@@ -220,7 +235,7 @@ struct ChallengeBanner: View {
                 Button("It's me") { Task { await model.approveChallenge() } }
                     .buttonStyle(HUDButtonStyle(tint: HUD.good))
                 Button("Lock PC") { Task { await model.denyChallenge() } }
-                    .buttonStyle(HUDButtonStyle(tint: HUD.alert, filled: true))
+                    .buttonStyle(HUDButtonStyle(tint: HUD.alert))
             }
         }
         .padding(12)

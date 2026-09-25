@@ -22,16 +22,17 @@ final class ScreenshotTests: XCTestCase {
 
         let model = AppModel.shared
         model.pc = PairedPC(deviceId: "screenshot", serverKey: Data(repeating: 1, count: 65), serviceName: "DOM-PC", host: "192.0.2.1", port: 7788)
-        model.showcase(pcName: "DOM-PC", lines: [
-            (.you, "Turn the bedroom light off"),
-            (.jarvis, "Bedroom Light is off, sir."),
-            (.you, "What's on my calendar this afternoon?"),
-            (.jarvis, "Two things, sir: the dentist at three, and a call with Sam at half four.")
-        ])
-
-        Screens.seed()
 
         for (name, view) in Screens.all {
+            // Before every screen, because a screen's own .task may have moved the model on.
+            model.showcase(pcName: "DOM-PC", lines: [
+                (.you, "Turn the bedroom light off"),
+                (.jarvis, "Bedroom Light is off, sir."),
+                (.you, "What's on my calendar this afternoon?"),
+                (.jarvis, "Two things, sir: the dentist at three, and a call with Sam at half four.")
+            ])
+            Screens.seed()
+
             let image = draw(view)
             try XCTUnwrap(image.pngData()).write(to: directory.appendingPathComponent("\(name).png"))
         }

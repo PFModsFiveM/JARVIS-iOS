@@ -65,8 +65,7 @@ struct CapabilitiesView: View {
             .scrollContentBackground(.hidden)
             .background(HUDBackdrop().ignoresSafeArea())
             .searchable(text: $search, prompt: "Search what JARVIS can do")
-            .navigationTitle("What JARVIS can do")
-            .navigationBarTitleDisplayMode(.inline)
+            .hudTitle("What JARVIS can do")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .task { await load() }
         }

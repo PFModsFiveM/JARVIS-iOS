@@ -51,10 +51,12 @@ struct SecurityView: View {
                         .buttonStyle(HUDButtonStyle())
                     Text("The red screens on the PC exactly as a stranger would see them. Nothing is locked.")
                         .font(.footnote).foregroundStyle(HUD.dim)
+                    // Both in the one alert red, outlined: these are the two buttons that do something to
+                    // the PC that cannot be waved away, and a solid slab of colour was louder than either.
                     Button("Initiate now") { confirmInitiate = true }
-                        .buttonStyle(HUDButtonStyle(tint: HUD.amber))
+                        .buttonStyle(HUDButtonStyle(tint: HUD.alert))
                     Button("Lock the PC") { Task { await model.securityAction("lock") } }
-                        .buttonStyle(HUDButtonStyle(tint: HUD.alert, filled: true))
+                        .buttonStyle(HUDButtonStyle(tint: HUD.alert))
                     Button {
                         Task { await model.standDown() }
                     } label: {
