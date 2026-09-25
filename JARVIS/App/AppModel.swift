@@ -101,6 +101,12 @@ final class AppModel: ObservableObject {
         let height: Int
         let primary: Bool
         var id: Int { index }
+
+        /// What fits on a segmented control: "Main", "Left", "Right", and a star for the primary.
+        var shortName: String {
+            let first = name.split(separator: " ").first.map(String.init) ?? "\(index + 1)"
+            return primary ? "\(first) \u{2605}" : first
+        }
     }
     @Published private(set) var screenDisplays: [ScreenDisplayInfo] = []
     @Published private(set) var liveDisplay: Int?
@@ -1026,6 +1032,9 @@ final class AppModel: ObservableObject {
 
     /// Face ID, then the PC starts sending the display. Watching only: nothing here reaches the PC's keyboard or mouse.
     func startLive(_ display: Int) async {
+        // Asked for on purpose, so whatever failed before is no longer a reason not to try.
+        lastLiveFailure = nil
+
         do {
             // Face ID once per connection: after the first approval the PC lets this connection switch displays freely.
             let client = try await session()
@@ -1194,8 +1203,19 @@ final class AppModel: ObservableObject {
         }
 
         guard let display = liveDisplay else { return }
+
+        // Not straight after one that failed. The owner pressing Watch is always allowed; a network
+        // change quietly trying again is what turns one failure into a loop.
+        if let failed = lastLiveFailure, Date().timeIntervalSince(failed) < Self.afterALiveFailure { return }
+
         Task { await startLive(display) }
     }
+
+    /// How long a failed live view stops the network-change restart from trying again.
+    nonisolated static let afterALiveFailure: TimeInterval = 60
+
+    /// When live view last ended with a reason from the PC.
+    private var lastLiveFailure: Date?
 
     /// Something JARVIS said on its own - a reminder, a finished task, a question. In the conversation while the app
     /// is open; as a notification while it runs in the background.
@@ -1222,6 +1242,12 @@ final class AppModel: ObservableObject {
         }
         if message.kind == "security.photo" { receiveSecurityPhoto(message); return }
         if message.kind == "screen.ended" {
+            // Remembered, and that matters: the network changing restarts a running stream, and on
+            // mobile data it changes often. A display the PC cannot read would be asked for again
+            // every few seconds, each attempt ending the same way - which is what the owner saw as
+            // the PC connection dropping over and over while they tried to use it.
+            lastLiveFailure = Date()
+
             liveDisplay = nil
             screenFramesPerSecond = 0
             toast = message.text("reason") ?? "Live view ended."

@@ -26,7 +26,10 @@ struct ScreenView: View {
             if model.screenDisplays.count > 1 {
                 Picker("Display", selection: $selected) {
                     ForEach(model.screenDisplays) { display in
-                        Text(display.primary ? "\(display.index + 1) ★" : "\(display.index + 1)").tag(display.index)
+                        // The PC's own name for it - "Main display", "Left display" - rather than a
+                        // number from its enumeration order, which put the star on whichever
+                        // monitor Windows happened to list first.
+                        Text(display.shortName).tag(display.index)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -38,6 +41,11 @@ struct ScreenView: View {
 
             HStack(spacing: 6) {
                 screen
+                    // Shaped like the screen it is showing, so the picture is as big as the phone
+                    // can make it. It used to be given every spare point of height and then fit a
+                    // 16:9 frame inside that, which left a thin band of picture between two large
+                    // black bars - "the monitors are tiny", and they were.
+                    .aspectRatio(pictureShape, contentMode: .fit)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.black)
                     .overlay(Rectangle().stroke((model.controlling ? HUD.amber : HUD.accent).opacity(0.4), lineWidth: 1))
@@ -135,6 +143,23 @@ struct ScreenView: View {
                 .accessibilityLabel("Save a snapshot to Photos")
             }
         }
+    }
+
+    /// The shape of the display being watched, turned with the picture.
+    ///
+    /// From the frame that arrived when there is one, and from what the PC said about the display
+    /// before the first frame - so the box is the right shape while it is still black, rather than
+    /// jumping when the picture appears.
+    private var pictureShape: CGFloat {
+        let size = model.screenFrame?.size
+            ?? model.screenDisplays.first(where: { $0.index == selected })
+                .map { CGSize(width: $0.width, height: $0.height) }
+            ?? CGSize(width: 16, height: 9)
+
+        guard size.width > 0, size.height > 0 else { return 16.0 / 9.0 }
+
+        let ratio = size.width / size.height
+        return sideways ? 1 / ratio : ratio
     }
 
     // MARK: the picture
