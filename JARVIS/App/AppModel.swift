@@ -1227,3 +1227,17 @@ final class AppModel: ObservableObject {
         }
     }
 }
+
+#if DEBUG
+// MARK: screenshots
+
+extension AppModel {
+    /// Puts the model in a believable state for the screenshot tests: a paired PC that is answering,
+    /// and a short conversation. Debug builds only, and called from nowhere but the tests - a release
+    /// build does not contain it, so it cannot put pretend state in front of anybody.
+    func showcase(pcName: String, lines script: [(ChatLine.Speaker, String)]) {
+        link = .online(pcName)
+        lines = script.map { ChatLine(speaker: $0.0, text: $0.1) }
+    }
+}
+#endif

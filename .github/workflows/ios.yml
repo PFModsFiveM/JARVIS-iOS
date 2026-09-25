@@ -43,6 +43,9 @@ jobs:
           echo "id=$id" >> "$GITHUB_OUTPUT"
 
       - name: Build and test
+        env:
+          # Passed into the test process with the prefix removed: ScreenshotTests draws each screen there.
+          TEST_RUNNER_SCREENSHOTS: ${{ github.workspace }}/screens
         run: |
           set -o pipefail
           xcodebuild test \
@@ -53,6 +56,16 @@ jobs:
               grep -E "error:|failed \(" build.log | sort -u | head -40 | while IFS= read -r line; do echo "::error::$line"; done
               exit 1
             }
+
+      # The screens as the phone draws them, because nobody working on this has a Mac to look with.
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: screens/
+          retention-days: 14
+          if-no-files-found: warn
 
   ipa:
     runs-on: macos-latest
