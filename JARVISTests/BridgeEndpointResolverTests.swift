@@ -38,12 +38,15 @@ final class BridgeEndpointResolverTests: XCTestCase {
         XCTAssertTrue(hosts(found).contains("JARVIS DOM-PC (found on this network)"))
     }
 
-    func testOnMobileDataOnlyThePrivateNetworkIsTried() {
+    func testOnMobileDataTheAddressesGoFirstAndTheNameIsStillThere() {
         // A home address cannot answer from cellular. Including it would spend the timeout on
         // something that cannot work - which is exactly what the old order did.
+        //
+        // The address before the name is newer: each attempt gets eight seconds on mobile data, and
+        // the name cannot even be tried until the tunnel's resolver is up.
         let found = BridgeEndpointResolver.candidates(for: pc(), discovered: [], cellular: true)
 
-        XCTAssertEqual(hosts(found), ["dom-pc.tailnet-name.ts.net:47823", "100.101.102.103:47823"])
+        XCTAssertEqual(hosts(found), ["100.101.102.103:47823", "dom-pc.tailnet-name.ts.net:47823"])
         XCTAssertFalse(hosts(found).contains { $0.hasPrefix("192.168.") })
     }
 

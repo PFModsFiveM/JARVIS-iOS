@@ -119,14 +119,26 @@ enum BridgeEndpointResolver {
             // A home address cannot answer from mobile data. Including it would spend the timeout
             // on something that cannot work.
             //
-            // Numbers before names. A private network's addresses are fixed and need nothing looked
-            // up; its name needs the tunnel's own resolver, which on mobile data is one more thing
-            // to be brought up before anything can be tried. Both are offered - the name is what
-            // survives an address changing - but the one that cannot be delayed by DNS goes first,
-            // because each attempt here is now given eight seconds rather than two and a half.
-            found += privateOnes.sorted { left, right in
-                isLiteralAddress(left.name) && !isLiteralAddress(right.name)
-            }
+            // Numbers before names, but never before what the owner typed.
+            //
+            // A private network's addresses are fixed and need nothing looked up; its name needs
+            // the tunnel's own resolver, which on mobile data is one more thing to be brought up
+            // before anything can be tried. Both are offered - the name is what survives an address
+            // changing - but the one that cannot be delayed by DNS goes first, because each attempt
+            // here is given eight seconds rather than two and a half.
+            //
+            // The owner's own address stays at the front regardless. Somebody who went to the
+            // trouble of typing one meant it, and sorting it behind a number the PC volunteered
+            // would quietly overrule them - which a first attempt at this did.
+            //
+            // Partitioned rather than sorted, because Swift's sort is not stable: two names would
+            // come back in whatever order it liked, which is a different list on different days.
+            let typed = privateOnes.filter { $0.name == pc.remoteHost }
+            let said = privateOnes.filter { $0.name != pc.remoteHost }
+
+            found += typed
+                + said.filter { isLiteralAddress($0.name) }
+                + said.filter { !isLiteralAddress($0.name) }
         } else if preferLocal && !found.isEmpty {
             found += local + privateOnes
         } else {
