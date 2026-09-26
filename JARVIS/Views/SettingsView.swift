@@ -126,6 +126,8 @@ struct SettingsView: View {
 
                 WhereaboutsSection(reporter: model.whereabouts)
 
+                LearningSection(learning: LearningModel.shared)
+
                 HUDFrame(title: "Alerts when JARVIS is closed") {
                     Toggle("Send alerts through ntfy", isOn: Binding(get: { model.alertsTopic != nil }, set: { on in Task { await model.setAlerts(on) } }))
                         .tint(HUD.accent).foregroundStyle(HUD.text)
@@ -262,5 +264,44 @@ struct WhereaboutsSection: View {
             Text("Your positions go to your own PC and nowhere else. iOS wakes JARVIS when you move a few hundred metres rather than tracking you continuously, which is why this costs almost no battery. Anything recorded while the PC is off waits on this phone and is sent when it comes back.")
                 .font(.footnote).foregroundStyle(HUD.dim)
         }
+    }
+}
+
+/// The PC's learning session: start it, stop it, and watch it go by the PC's own counts.
+struct LearningSection: View {
+    @ObservedObject var learning: LearningModel
+
+    var body: some View {
+        HUDFrame(title: "Learning") {
+            Text(learning.status.said)
+                .font(.footnote).foregroundStyle(HUD.text)
+
+            if learning.status.running {
+                HStack {
+                    HUDLabel(text: "Step \(learning.status.step) of \(learning.status.steps)")
+                    Spacer()
+                    if learning.status.of > 0 {
+                        Text("\(learning.status.done) of \(learning.status.of)")
+                            .font(.system(.caption, design: .monospaced)).foregroundStyle(HUD.dim)
+                    }
+                }
+                if let fraction = learning.status.stepFraction {
+                    ProgressView(value: fraction).tint(HUD.accent)
+                }
+                Button("Stop") { Task { await learning.stop() } }
+                    .buttonStyle(HUDButtonStyle())
+            } else {
+                Button("Start a learning session") { Task { await learning.start() } }
+                    .buttonStyle(HUDButtonStyle())
+            }
+
+            if let message = learning.message {
+                Text(message).font(.caption).foregroundStyle(HUD.dim)
+            }
+
+            Text("JARVIS on your PC goes over how it has been used - what it got wrong, what you corrected, how long things took - and learns from it. Only small, reversible things are ever changed on their own; anything bigger is left for you. The same session can be started from the PC by saying \"start a learning session\".")
+                .font(.footnote).foregroundStyle(HUD.dim)
+        }
+        .task { await learning.refresh() }
     }
 }
