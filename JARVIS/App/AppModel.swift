@@ -209,8 +209,8 @@ final class AppModel: ObservableObject {
         case online(String)
         /// The wake request went out and the PC never appeared.
         case wakeTimedOut(String)
-        /// The PC's pre-login service answered after a wake, so the machine is on - but desktop JARVIS
-        /// is not. The wake worked; what is missing is a signed-in session.
+        /// The PC's pre-login service answered after a wake, so the machine is on and the wake worked,
+        /// but desktop JARVIS has not answered. Carries the sentence saying why, from the service.
         case awakeWithoutJarvis(String)
         case connectionFailed(String)
         case unpaired
@@ -239,8 +239,7 @@ final class AppModel: ObservableObject {
             case .bridgeConnecting: return "Connecting..."
             case .online: return "JARVIS connected"
             case .wakeTimedOut(let sent): return "The wake request was sent to \(sent), but JARVIS never answered."
-            case .awakeWithoutJarvis(let summary):
-                return "The PC's service answered (\(summary)), so it is on and the wake worked. Desktop JARVIS isn't running yet - it starts when somebody signs in."
+            case .awakeWithoutJarvis(let why): return why
             case .connectionFailed(let why): return why
             case .unpaired: return "Pair with a PC to begin."
             }
@@ -335,7 +334,6 @@ final class AppModel: ObservableObject {
         // Try the bridge repeatedly rather than once at the end: the PC may be up in five seconds,
         // and making somebody wait ninety for a page to notice is its own kind of broken.
         let started = Date()
-        var askedService = false
 
         while Date().timeIntervalSince(started) < Double(Self.wakeWindow) {
             if Task.isCancelled { wakeState = nil; return }
@@ -349,33 +347,41 @@ final class AppModel: ObservableObject {
                 return
             }
 
-            // Halfway through, ask the pre-login service once. A PC woken from off or hibernate comes
-            // up with nobody signed in, so desktop JARVIS never answers however long this waits - and
-            // "no answer" would then be reported for a wake that worked.
-            if !askedService, Date().timeIntervalSince(started) > Double(Self.wakeWindow) / 2 {
-                askedService = true
-                if await serviceAnswered() { return }
+            // A failed connection has already asked the pre-login service why (machineSaysWhy). If
+            // it answered since this wake began, the machine is on: a PC woken from off comes up with
+            // nobody signed in, and desktop JARVIS would never answer however long this waited.
+            if let report = MachineLink.shared.report, report.at >= started {
+                machineIsOn(report)
+                return
             }
 
             try? await Task.sleep(for: .seconds(3))
             wakeState = .waking(sent: outcome.destination, seconds: Int(Date().timeIntervalSince(started)))
         }
 
-        if await serviceAnswered() { return }
+        if MachineLink.shared.isPaired, let report = await MachineLink.shared.ask(force: true) {
+            machineIsOn(report)
+            return
+        }
 
         note("wake: no answer after \(Self.wakeWindow) s; delivery of the packets is unconfirmed")
         wakeState = .wakeTimedOut(outcome.destination)
     }
 
-    /// Whether the PC's pre-login service answers, which means the machine is on even though desktop
-    /// JARVIS is not. Only asked when this phone is paired with the service.
-    private func serviceAnswered() async -> Bool {
-        let service = MachineLink.shared
-        guard service.isPaired, let report = await service.ask(force: true) else { return false }
-
+    /// The pre-login service answered after a wake: the machine is on and the wake worked. Said as
+    /// the service describes the session, because "JARVIS isn't running" is only sometimes the reason.
+    private func machineIsOn(_ report: MachineReport) {
         note("wake: the PC's service answered (\(report.summary)); the machine is on")
-        wakeState = .awakeWithoutJarvis(report.summary)
-        return true
+
+        let why: String
+        switch report.session {
+        case .nobodySignedIn: why = "nobody has signed in yet, so desktop JARVIS isn't running."
+        case .locked: why = report.desktopRunning ? "it's locked; JARVIS is running and will answer once it is unlocked." : "it's locked and desktop JARVIS isn't running."
+        case .inUse: why = report.desktopRunning ? "JARVIS is running, but this phone couldn't reach it yet." : "desktop JARVIS isn't running."
+        case .unknown: why = "it couldn't say what it is doing."
+        }
+
+        wakeState = .awakeWithoutJarvis("\(report.machine) is on - the wake worked - but \(why)")
     }
 
     // MARK: diagnosing a wake before it is needed
