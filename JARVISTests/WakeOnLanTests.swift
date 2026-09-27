@@ -223,6 +223,83 @@ final class WakeOnLanTests: XCTestCase {
         XCTAssertEqual(sent.count, WakeOnLanService.burst)
     }
 
+    // MARK: evidence, not guesses
+
+    func testARemoteNameIsLookedUpOnceAndThePacketsGoToWhatItResolvedTo() async {
+        let wire = Wire()
+        let outcome = await WakeOnLanService(send: wire.send, resolve: { _ in "203.0.113.7" })
+            .wake(profile(), using: .remoteRouter)
+
+        XCTAssertTrue(outcome.sent)
+        XCTAssertEqual(outcome.resolved, "203.0.113.7")
+        XCTAssertEqual(outcome.host, "home.example-ddns.test")
+        XCTAssertEqual(outcome.port, 40009)
+        let sent = await wire.sent
+        XCTAssertTrue(sent.allSatisfy { $0.host == "203.0.113.7" })
+    }
+
+    func testANameThatWillNotResolveSendsNothingAndSaysSo() async {
+        let wire = Wire()
+        let outcome = await WakeOnLanService(
+            send: wire.send, resolve: { host in throw WakeSendError.cannotResolve(host) })
+            .wake(profile(), using: .remoteRouter)
+
+        XCTAssertFalse(outcome.sent)
+        XCTAssertTrue(outcome.because.contains("could not be looked up"))
+        let sent = await wire.sent
+        XCTAssertTrue(sent.isEmpty)
+    }
+
+    func testAHomeBroadcastIsNeverLookedUp() async {
+        let wire = Wire()
+        let outcome = await WakeOnLanService(send: wire.send, resolve: { _ in XCTFail("looked up"); return nil })
+            .wake(profile(), using: .localBroadcast)
+
+        XCTAssertTrue(outcome.sent)
+        XCTAssertNil(outcome.resolved)
+    }
+
+    func testTheEvidenceSaysWhatWasDoneAndThatDeliveryIsUnconfirmed() async {
+        let wire = Wire()
+        let outcome = await WakeOnLanService(send: wire.send, resolve: { _ in "203.0.113.7" })
+            .wake(profile(), using: .remoteRouter)
+
+        let evidence = outcome.evidence.joined(separator: "\n")
+        XCTAssertTrue(evidence.contains("through the router"))
+        XCTAssertTrue(evidence.contains("resolved to 203.0.113.7"))
+        XCTAssertTrue(evidence.contains("UDP port: 40009"))
+        XCTAssertTrue(evidence.contains("3 magic packets handed to iOS"))
+        XCTAssertTrue(evidence.contains("unconfirmed"))
+    }
+
+    func testNoAnswerFromOutsideNamesWhatCannotBeKnownAndNeverBlamesAChangedAddress() async {
+        // The old wording told the owner to check that the home address had not changed - the one
+        // thing a dynamic-DNS name makes unnecessary - and implied the router had the packet.
+        let wire = Wire()
+        let outcome = await WakeOnLanService(send: wire.send, resolve: { _ in "203.0.113.7" })
+            .wake(profile(), using: .remoteRouter)
+
+        let advice = outcome.noAnswerAdvice(waited: 90)
+        XCTAssertFalse(advice.contains("has not changed"))
+        XCTAssertTrue(advice.contains("resolved to 203.0.113.7"))
+        XCTAssertTrue(advice.contains("cannot be confirmed"))
+        XCTAssertTrue(advice.contains("public IPv4"))
+        XCTAssertTrue(advice.contains("CGNAT"))
+        XCTAssertTrue(advice.contains("forwards UDP 40009"))
+        XCTAssertFalse(advice.lowercased().contains("router received"))
+        XCTAssertFalse(advice.lowercased().contains("failed to wake"))
+    }
+
+    func testNoAnswerAtHomePointsAtTheCardAndTheBios() async {
+        let wire = Wire()
+        let outcome = await WakeOnLanService(send: wire.send).wake(profile(), using: .localBroadcast)
+
+        let advice = outcome.noAnswerAdvice(waited: 90)
+        XCTAssertTrue(advice.contains("Power Management"))
+        XCTAssertTrue(advice.contains("BIOS"))
+        XCTAssertFalse(advice.contains("CGNAT"))
+    }
+
     // MARK: the rule the whole thing rests on
 
     func testSendingNeedsNoBridgeNoJarvisAndNothingLoggedIn() async {

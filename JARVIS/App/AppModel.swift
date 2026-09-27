@@ -209,6 +209,9 @@ final class AppModel: ObservableObject {
         case online(String)
         /// The wake request went out and the PC never appeared.
         case wakeTimedOut(String)
+        /// The PC's pre-login service answered after a wake, so the machine is on - but desktop JARVIS
+        /// is not. The wake worked; what is missing is a signed-in session.
+        case awakeWithoutJarvis(String)
         case connectionFailed(String)
         case unpaired
 
@@ -219,6 +222,7 @@ final class AppModel: ObservableObject {
             case .bridgeConnecting: return "CONNECTING"
             case .online: return "ONLINE"
             case .wakeTimedOut: return "NO ANSWER"
+            case .awakeWithoutJarvis: return "ON"
             case .connectionFailed: return "OFFLINE"
             case .unpaired: return "NOT PAIRED"
             }
@@ -235,6 +239,8 @@ final class AppModel: ObservableObject {
             case .bridgeConnecting: return "Connecting..."
             case .online: return "JARVIS connected"
             case .wakeTimedOut(let sent): return "The wake request was sent to \(sent), but JARVIS never answered."
+            case .awakeWithoutJarvis(let summary):
+                return "The PC's service answered (\(summary)), so it is on and the wake worked. Desktop JARVIS isn't running yet - it starts when somebody signs in."
             case .connectionFailed(let why): return why
             case .unpaired: return "Pair with a PC to begin."
             }
@@ -282,7 +288,11 @@ final class AppModel: ObservableObject {
     /// did nothing does not leave the page saying "waiting" for ever.
     static let wakeWindow = 90
 
-    private let wakeService = WakeOnLanService()
+    /// Looks the remote name up before sending, so a wake that does nothing can say what it resolved to.
+    private let wakeService = WakeOnLanService(resolve: WakeOnLanService.ipv4)
+
+    /// The last wake attempt, as evidence: route, name, what it resolved to, port, packets, when.
+    @Published private(set) var lastWake: WakeOutcome?
     private var waking: Task<Void, Never>?
 
     /// Sends a wake request, then keeps trying the bridge until the PC answers or the window ends.
@@ -311,6 +321,7 @@ final class AppModel: ObservableObject {
 
         let onCellular = network.cellular
         let outcome = await wakeService.wake(profile, cellular: onCellular)
+        lastWake = outcome
 
         guard outcome.sent else {
             note("wake: \(outcome.because)")
@@ -318,12 +329,14 @@ final class AppModel: ObservableObject {
             return
         }
 
-        note("wake: sent \(outcome.packets) packets to \(outcome.destination)")
+        note("wake: sent \(outcome.packets) packets \(outcome.strategy == .localBroadcast ? "to the home broadcast" : "through the router")\(outcome.resolved.map { " (resolved \($0))" } ?? "")")
         wakeState = .waking(sent: outcome.destination, seconds: 0)
 
         // Try the bridge repeatedly rather than once at the end: the PC may be up in five seconds,
         // and making somebody wait ninety for a page to notice is its own kind of broken.
         let started = Date()
+        var askedService = false
+
         while Date().timeIntervalSince(started) < Double(Self.wakeWindow) {
             if Task.isCancelled { wakeState = nil; return }
 
@@ -336,12 +349,90 @@ final class AppModel: ObservableObject {
                 return
             }
 
+            // Halfway through, ask the pre-login service once. A PC woken from off or hibernate comes
+            // up with nobody signed in, so desktop JARVIS never answers however long this waits - and
+            // "no answer" would then be reported for a wake that worked.
+            if !askedService, Date().timeIntervalSince(started) > Double(Self.wakeWindow) / 2 {
+                askedService = true
+                if await serviceAnswered() { return }
+            }
+
             try? await Task.sleep(for: .seconds(3))
             wakeState = .waking(sent: outcome.destination, seconds: Int(Date().timeIntervalSince(started)))
         }
 
-        note("wake: no answer after \(Self.wakeWindow) s")
+        if await serviceAnswered() { return }
+
+        note("wake: no answer after \(Self.wakeWindow) s; delivery of the packets is unconfirmed")
         wakeState = .wakeTimedOut(outcome.destination)
+    }
+
+    /// Whether the PC's pre-login service answers, which means the machine is on even though desktop
+    /// JARVIS is not. Only asked when this phone is paired with the service.
+    private func serviceAnswered() async -> Bool {
+        let service = MachineLink.shared
+        guard service.isPaired, let report = await service.ask(force: true) else { return false }
+
+        note("wake: the PC's service answered (\(report.summary)); the machine is on")
+        wakeState = .awakeWithoutJarvis(report.summary)
+        return true
+    }
+
+    // MARK: diagnosing a wake before it is needed
+
+    /// What the PC says about whether it can be woken. Asked while it is awake.
+    @Published private(set) var wakeReadiness: WakeReadinessReport?
+
+    /// The last answer from the PC's wake-path listener.
+    @Published private(set) var wakeProbe: WakeProbeReport?
+
+    /// Why the last diagnosis request did not produce an answer, when it did not.
+    @Published private(set) var wakeDiagnosisProblem: String?
+
+    /// Asks the PC to read its own wake setup. Needs the PC awake and connected.
+    func checkWakeReadiness() async {
+        do {
+            let reply = try await session().request("wake.readiness", timeout: 30)
+            guard reply.kind == "wake.readiness", let report = WakeReadinessReport.read(reply.body) else {
+                wakeDiagnosisProblem = reply.message
+                return
+            }
+            wakeReadiness = report
+            wakeDiagnosisProblem = nil
+            note("wake check: \(report.firstProblem.map { "first problem: \($0.title)" } ?? "no problem found")")
+        } catch {
+            wakeDiagnosisProblem = error.localizedDescription
+        }
+    }
+
+    /// Asks the PC to listen for wake packets for a few minutes, so a wake sent now can be seen arriving.
+    func startWakeProbe() async { await wakeProbeRequest("wake.probe.start", ["seconds": 180]) }
+
+    /// What the PC's listener has heard so far.
+    func readWakeProbe() async { await wakeProbeRequest("wake.probe") }
+
+    private func wakeProbeRequest(_ kind: String, _ body: [String: Any] = [:]) async {
+        do {
+            let reply = try await session().request(kind, body, timeout: 15)
+            guard reply.kind == "wake.probe", let report = WakeProbeReport.read(reply.body) else {
+                wakeDiagnosisProblem = reply.message
+                return
+            }
+            wakeProbe = report
+            wakeDiagnosisProblem = nil
+        } catch {
+            wakeDiagnosisProblem = error.localizedDescription
+        }
+    }
+
+    /// Sends one wake burst the way this phone would from where it is, without waiting for the PC -
+    /// it is already awake. The listener on the PC is what reports whether it arrived.
+    func sendTestWake() async {
+        let outcome = await wakeService.wake(wakeProfile, cellular: network.cellular)
+        lastWake = outcome
+        note(outcome.sent
+             ? "wake test: sent \(outcome.packets) packets \(outcome.strategy == .localBroadcast ? "to the home broadcast" : "through the router")"
+             : "wake test: \(outcome.because)")
     }
 
     /// What JARVIS says when asked to wake the PC. Never that it is awake - only that it was asked.

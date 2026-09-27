@@ -119,6 +119,11 @@ struct WakeProfile: Codable, Equatable {
 }
 
 /// What happened when a wake request was sent. Never whether the machine woke.
+///
+/// Everything here is something this phone did or saw. The one thing it cannot see - whether a
+/// packet crossed the internet, reached the router, was forwarded to the home network and was heard
+/// by the card - is exactly what a wake from outside most often fails at, so the advice built from
+/// this says what is known and names what is not, rather than guessing which part failed.
 struct WakeOutcome: Equatable {
     var sent: Bool
     var strategy: WakeStrategy
@@ -126,9 +131,56 @@ struct WakeOutcome: Equatable {
     var packets: Int
     /// One sentence a person can read. Empty when it worked.
     var because: String
+    /// The name or address the packets were addressed to, as configured.
+    var host: String = ""
+    var port: UInt16 = 0
+    /// The IPv4 address a remote name resolved to before sending, when it was looked up here. Nil
+    /// for a home broadcast, which is already an address.
+    var resolved: String? = nil
+    var at: Date = Date()
 
     static func failed(_ strategy: WakeStrategy, _ destination: String, _ because: String) -> WakeOutcome {
         WakeOutcome(sent: false, strategy: strategy, destination: destination, packets: 0, because: because)
+    }
+
+    /// The facts of this attempt, one per line, for the diagnostics screen. No claim about the PC.
+    var evidence: [String] {
+        var lines = ["Route: " + (strategy == .localBroadcast ? "home broadcast (on the home network)" : "through the router (from outside)")]
+
+        if strategy == .remoteRouter {
+            lines.append("Remote host: " + (host.isEmpty ? "not set" : "configured"))
+            if let resolved {
+                lines.append("DNS: resolved to \(resolved) (IPv4)")
+            } else if sent {
+                lines.append("DNS: resolved by iOS while sending")
+            }
+        }
+
+        lines.append("UDP port: \(port)")
+        lines.append(sent ? "\(packets) magic packets handed to iOS" : "Nothing sent: \(because)")
+        lines.append("At: " + at.formatted(date: .abbreviated, time: .standard))
+
+        if sent {
+            lines.append("Delivery: unconfirmed. Nothing acknowledges a magic packet, so whether it reached the router, the home network or the card is not known here.")
+        }
+
+        return lines
+    }
+
+    /// What to say when the packets went and JARVIS never answered, from what is actually known.
+    ///
+    /// It does not say the router got the packet, or that the card did, or that the PC failed to wake:
+    /// all this phone knows is that it handed the packets to iOS and nothing answered afterwards.
+    func noAnswerAdvice(waited seconds: Int) -> String {
+        let count = "\(packets) magic packet\(packets == 1 ? "" : "s")"
+
+        if strategy == .localBroadcast {
+            return "\(count) went to the home broadcast address (\(host):\(port)) and JARVIS did not come online within \(seconds) s. Delivery on the home network cannot be confirmed either. Check that the Ethernet card is allowed to wake the PC (Device Manager › the card › Power Management), that Wake on Magic Packet is on in its Advanced tab, and that Wake-on-LAN is enabled in the BIOS. Wake-on-LAN over Wi-Fi usually does not work; it needs the wired card."
+        }
+
+        let lookedUp = resolved.map { " The name resolved to \($0)." } ?? ""
+
+        return "\(count) went to the configured dynamic-DNS name on UDP \(port) and JARVIS did not come online within \(seconds) s.\(lookedUp) Whether they reached the router, were forwarded to the home network or were heard by the card cannot be confirmed from here. Check, in order: that the PC wakes from a wake sent at home; that the router forwards UDP \(port) to the home broadcast address; that the home connection has a public IPv4 address (not CGNAT); and that the router allows forwarding to a broadcast address - many do not. With the PC awake, Diagnostics can test the route into the house."
     }
 }
 
@@ -158,11 +210,20 @@ actor WakeOnLanService {
     /// without a socket, and nothing in the suite ever broadcasts on the machine it runs on.
     typealias Send = @Sendable (Data, String, UInt16) async throws -> Void
 
-    private let send: Send
+    /// Looks a remote name up to one IPv4 address before sending, so the attempt can say what the
+    /// name resolved to. Nil means it was not looked up here and the send resolves it itself.
+    typealias Resolve = @Sendable (String) async throws -> String?
 
-    init(send: @escaping Send = WakeOnLanService.udp) {
+    private let send: Send
+    private let resolve: Resolve
+
+    init(send: @escaping Send = WakeOnLanService.udp, resolve: @escaping Resolve = WakeOnLanService.notLookedUp) {
         self.send = send
+        self.resolve = resolve
     }
+
+    /// Leaves the name to the send. The default, so a test's fake send is never preceded by a real lookup.
+    static let notLookedUp: Resolve = { _ in nil }
 
     /// Which way to send, given where the phone is and what has been set up.
     ///
@@ -203,22 +264,45 @@ actor WakeOnLanService {
         }
         guard port > 0 else { return .failed(strategy, destination, "\(port) is not a port.") }
 
+        let at = Date()
+        var resolved: String?
+
+        // A remote name is looked up once, before anything is sent, so the attempt can say what it
+        // resolved to - the first fact worth knowing when a wake from outside does nothing.
+        if strategy == .remoteRouter {
+            do {
+                resolved = try await resolve(host)
+            } catch {
+                var failed = WakeOutcome.failed(strategy, destination, Self.explain(error, profile, strategy))
+                failed.host = host
+                failed.port = port
+                failed.at = at
+                return failed
+            }
+        }
+
         let packet = mac.magicPacket
         var sent = 0
 
         for attempt in 0..<Self.burst {
             if attempt > 0 { try? await Task.sleep(for: Self.betweenPackets) }
             do {
-                try await send(packet, host, port)
+                try await send(packet, resolved ?? host, port)
                 sent += 1
             } catch {
                 // The first failure is the answer: a name that will not resolve resolves no better
                 // twice, and a network with no route to that address has none on the second try.
-                return .failed(strategy, destination, Self.explain(error, profile, strategy))
+                var failed = WakeOutcome.failed(strategy, destination, Self.explain(error, profile, strategy))
+                failed.host = host
+                failed.port = port
+                failed.resolved = resolved
+                failed.at = at
+                return failed
             }
         }
 
-        return WakeOutcome(sent: true, strategy: strategy, destination: destination, packets: sent, because: "")
+        return WakeOutcome(sent: true, strategy: strategy, destination: destination, packets: sent, because: "",
+                           host: host, port: port, resolved: resolved, at: at)
     }
 
     /// Tries each way this phone can reach the PC, best first, and stops at the first that sends.
@@ -302,6 +386,33 @@ actor WakeOnLanService {
         }
 
         guard written == packet.count else { throw WakeSendError.system(errno) }
+    }
+}
+
+extension WakeOnLanService {
+    /// One IPv4 address for a name, as text. A literal address is returned as it is.
+    ///
+    /// IPv4 only, as `udp` is: a router forwarding a port to a broadcast address is an IPv4 arrangement
+    /// throughout. A name with no IPv4 record is reported as not resolving, because for this purpose
+    /// it does not.
+    static let ipv4: Resolve = { host in
+        var hints = addrinfo(
+            ai_flags: 0, ai_family: AF_INET, ai_socktype: SOCK_DGRAM, ai_protocol: IPPROTO_UDP,
+            ai_addrlen: 0, ai_canonname: nil, ai_addr: nil, ai_next: nil)
+
+        var found: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, nil, &hints, &found) == 0, let first = found else { throw WakeSendError.cannotResolve(host) }
+        defer { freeaddrinfo(found) }
+        guard let raw = first.pointee.ai_addr else { throw WakeSendError.cannotResolve(host) }
+
+        var address = raw.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee.sin_addr }
+        var text = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+
+        guard inet_ntop(AF_INET, &address, &text, socklen_t(INET_ADDRSTRLEN)) != nil else {
+            throw WakeSendError.cannotResolve(host)
+        }
+
+        return String(cString: text)
     }
 }
 

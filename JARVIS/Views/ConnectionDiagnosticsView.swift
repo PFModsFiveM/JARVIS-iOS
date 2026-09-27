@@ -78,6 +78,71 @@ struct ConnectionDiagnosticsView: View {
                         .font(.caption).foregroundStyle(HUD.dim).fixedSize(horizontal: false, vertical: true)
                 }
 
+                if let last = model.lastWake {
+                    HUDFrame(title: "Last wake attempt") {
+                        ForEach(Array(last.evidence.enumerated()), id: \.offset) { _, line in
+                            Text(line).font(.system(size: 11, design: .monospaced)).foregroundStyle(HUD.text)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .textSelection(.enabled)
+                }
+
+                HUDFrame(title: "The PC's wake setup") {
+                    Text("Asked while the PC is awake: what it can read about being woken. It changes nothing on the PC.")
+                        .font(.caption).foregroundStyle(HUD.dim).fixedSize(horizontal: false, vertical: true)
+
+                    Button("Check the PC's wake setup") { Task { await model.checkWakeReadiness() } }
+                        .buttonStyle(HUDButtonStyle())
+                        .disabled(!model.link.isOnline)
+
+                    if let report = model.wakeReadiness {
+                        ForEach(report.checks) { check in
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack {
+                                    HUDLabel(text: check.title)
+                                    Spacer()
+                                    Text(check.state.rawValue.uppercased())
+                                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                        .foregroundStyle(colour(check.state))
+                                }
+                                Text(check.detail).font(.caption).foregroundStyle(HUD.dim)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        ForEach(Array(report.cannotKnow.enumerated()), id: \.offset) { _, line in
+                            Text("Cannot be checked: " + line).font(.caption2).foregroundStyle(HUD.dim)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+
+                HUDFrame(title: "Test the route into the house") {
+                    Text("With the PC awake, it listens for three minutes while this phone sends a wake the way it would from here. A packet that arrives from outside proves the dynamic-DNS name, the router's forward and the home network - not that the card wakes the PC from sleep. Try it once on home Wi-Fi first, then on mobile data.")
+                        .font(.caption).foregroundStyle(HUD.dim).fixedSize(horizontal: false, vertical: true)
+
+                    Button("1. Ask the PC to listen") { Task { await model.startWakeProbe() } }
+                        .buttonStyle(HUDButtonStyle())
+                        .disabled(!model.link.isOnline)
+                    Button("2. Send a test wake from here") { Task { await model.sendTestWake() } }
+                        .buttonStyle(HUDButtonStyle())
+                        .disabled(model.wakeProbe?.isListening != true)
+                    Button("3. Read what the PC heard") { Task { await model.readWakeProbe() } }
+                        .buttonStyle(HUDButtonStyle())
+                        .disabled(!model.link.isOnline || model.wakeProbe == nil)
+
+                    if let probe = model.wakeProbe {
+                        row("Listener", probe.state.rawValue)
+                        row("For this PC", "\(probe.forThisPc) (\(probe.fromOutside) from outside, \(probe.fromHome) from home)")
+                        if probe.forAnother > 0 { row("For another card", "\(probe.forAnother)") }
+                        Text(probe.meaning).font(.caption).foregroundStyle(HUD.text).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                if let problem = model.wakeDiagnosisProblem {
+                    Text(problem).font(.footnote).foregroundStyle(HUD.amber).fixedSize(horizontal: false, vertical: true)
+                }
+
                 HUDFrame(title: "Recent attempts") {
                     if model.connectionLog.isEmpty {
                         Text("Nothing yet.").font(.footnote).foregroundStyle(HUD.dim)
@@ -122,6 +187,15 @@ struct ConnectionDiagnosticsView: View {
         case .lastKnownLocal: return "the PC's address on the home network"
         case .privateNetwork: return "private network - works from anywhere"
         case .configured: return "typed in Settings"
+        }
+    }
+
+    private func colour(_ state: WakeReadinessReport.Check.State) -> Color {
+        switch state {
+        case .ok: return HUD.accent
+        case .problem: return HUD.alert
+        case .note: return HUD.amber
+        case .unknown: return HUD.dim
         }
     }
 

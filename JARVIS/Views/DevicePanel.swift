@@ -67,11 +67,17 @@ struct DevicePanel: View {
 
     /// What to look at when a wake request went out and nothing came back.
     ///
-    /// Written out rather than left as "it didn't work", because every one of these is a real thing
-    /// that stops it and none of them is guessable from the phone.
+    /// Built from what the attempt actually knows - which route, whether the name resolved and to what,
+    /// how many packets were handed to iOS - and never from a guess about which part failed. It used to
+    /// tell the owner to check "that your home address has not changed", which is exactly the one thing
+    /// a dynamic-DNS name makes unnecessary to check.
     private var helpAfterTimeout: String {
-        model.onCellular
-            ? "From mobile data the packet goes to your home connection and your router has to forward it inwards. Check the router still forwards \(model.wakeProfile.remotePort) to \(model.wakeProfile.broadcast.isEmpty ? "the home broadcast address" : model.wakeProfile.broadcast):\(model.wakeProfile.port), and that your home address has not changed."
+        if let last = model.lastWake, last.sent {
+            return last.noAnswerAdvice(waited: AppModel.wakeWindow)
+        }
+
+        return model.onCellular
+            ? "From mobile data the packet goes to your home connection, and your router has to forward UDP \(model.wakeProfile.remotePort) to \(model.wakeProfile.broadcast.isEmpty ? "the home broadcast address" : model.wakeProfile.broadcast):\(model.wakeProfile.port). Delivery cannot be confirmed from the phone. Diagnostics can check the PC's wake setup and test the route into the house while the PC is awake."
             : "Check the PC's network card is allowed to wake it (Device Manager › the Ethernet card › Power Management), and that Wake-on-LAN is on in its BIOS. Wake-on-LAN over Wi-Fi usually does not work; this needs the wired card."
     }
 }
