@@ -16,10 +16,33 @@ struct SecurityView: View {
 
                 if let photo = model.challengePhoto {
                     HUDFrame(title: "Who was at the PC", tint: HUD.alert) {
-                        Image(uiImage: photo).resizable().scaledToFit()
+                        Image(uiImage: photo)
+                            .resizable()
+                            .scaledToFit()
+                            .overlay(alignment: .topTrailing) {
+                                // On the picture rather than under it. Whoever wants this gone is
+                                // looking at the picture, and a button below the caption is one
+                                // scroll away from where their eyes already are.
+                                Button {
+                                    withAnimation { model.dismissChallengePhoto() }
+                                } label: {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 13, weight: .bold))
+                                        .foregroundStyle(HUD.alert)
+                                        .padding(8)
+                                        .background(.black.opacity(0.55), in: Circle())
+                                }
+                                .padding(8)
+                                .accessibilityLabel("Dismiss the picture")
+                            }
+
                         Text("Taken by the PC's camera when the Security Protocol challenged them.")
                             .font(.footnote).foregroundStyle(HUD.dim)
+
+                        Button("Dismiss") { withAnimation { model.dismissChallengePhoto() } }
+                            .buttonStyle(HUDButtonStyle())
                     }
+                    .transition(.opacity)
                 }
 
                 HUDFrame(title: "Status", tint: tint) {

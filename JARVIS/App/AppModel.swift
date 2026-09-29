@@ -1228,6 +1228,16 @@ final class AppModel: ObservableObject {
         Alerts.photo(title: "Who's at \(pcName)", body: "The Security Protocol has challenged them. This is what the PC's camera sees.", jpeg: data)
     }
 
+    /// Puts away the picture of whoever was at the PC.
+    ///
+    /// It had no way out. The picture appeared whenever one arrived and stayed on the security
+    /// screen for as long as the app was running, so having looked at it once there was nothing to
+    /// do but scroll past it. Dismissing is only about this screen - the event, its photographs and
+    /// its recording are all still on the PC.
+    func dismissChallengePhoto() {
+        challengePhoto = nil
+    }
+
     // MARK: remote control
 
     /// Face ID once; the PC then takes this connection's clicks and keys until it disconnects.
