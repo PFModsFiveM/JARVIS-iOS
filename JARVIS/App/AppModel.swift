@@ -917,9 +917,39 @@ final class AppModel: ObservableObject {
 
     // MARK: asking
 
+    /// Whether the PC has said this phone may read the current answer out.
+    ///
+    /// Defaults to true so that a phone with no PC to ask - away from home, or the bridge down -
+    /// behaves exactly as it always did rather than going mute.
+    @Published private(set) var mayReadAloud = true
+
+    /// Asks the PC whether to take this turn out loud.
+    ///
+    /// Only for turns the phone started by hearing something. A typed question is unambiguous: the
+    /// person is looking at the phone and typed into it, so nothing needs arbitrating.
+    private func claimTurn(spoken: Bool) async {
+        guard spoken, link.isOnline else { mayReadAloud = true; return }
+
+        do {
+            let reply = try await session().request("conversation.claim", [
+                "turnId": UUID().uuidString,
+                "listening": 1,
+                "foreground": UIApplication.shared.applicationState == .active ? 1 : 0
+            ], timeout: 4)
+
+            mayReadAloud = reply.body["granted"] as? Bool ?? true
+        } catch {
+            // The PC could not be asked. Answering is better than silence, and a duplicate is the
+            // lesser fault when the alternative is a phone that has stopped working.
+            mayReadAloud = true
+        }
+    }
+
     func ask(_ text: String, spoken: Bool = false) async {
         let request = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !request.isEmpty else { return }
+
+        await claimTurn(spoken: spoken)
 
         lines.append(ChatLine(speaker: .you, text: request))
 
@@ -954,7 +984,11 @@ final class AppModel: ObservableObject {
             let answer = reply.kind == "answer" ? (reply.text("text") ?? "") : reply.message
             lines.append(ChatLine(speaker: reply.kind == "answer" ? .jarvis : .system, text: answer))
             LiveActivity.shared.answer = answer
-            if speakAnswers || spoken {
+            // Whether to read it out is not this phone's decision alone. Its microphone hears the
+            // same room the PC's does, so a wake word meant for the PC reaches both, and both
+            // answering is the bug - with neither of them misbehaving on its own terms. The PC
+            // arbitrates, and a phone that was not chosen still shows the whole conversation.
+            if (speakAnswers || spoken) && mayReadAloud {
                 if usePCVoice, reply.kind == "answer", reply.body["voice"] as? Bool == true {
                     expectVoice(for: reply.id, fallback: answer)
                 } else {
