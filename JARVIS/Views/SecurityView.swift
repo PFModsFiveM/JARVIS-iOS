@@ -4,6 +4,7 @@ import SwiftUI
 struct SecurityView: View {
     @EnvironmentObject var model: AppModel
     @State private var confirmInitiate = false
+    @State private var showRecordings = false
 
     var body: some View {
         ScrollView {
@@ -43,6 +44,17 @@ struct SecurityView: View {
                             .buttonStyle(HUDButtonStyle())
                     }
                     .transition(.opacity)
+                }
+
+                // What the camera kept, one level down rather than as a sixth tab. It is looked at
+                // occasionally and after the fact, which is not worth a permanent place along the
+                // bottom of the screen.
+                HUDFrame(title: "Recordings") {
+                    Button("What the camera kept") { showRecordings = true }
+                        .buttonStyle(HUDButtonStyle())
+
+                    Text("Incidents from the last week, with the screen and the camera.")
+                        .font(.footnote).foregroundStyle(HUD.dim)
                 }
 
                 HUDFrame(title: "Status", tint: tint) {
@@ -103,6 +115,9 @@ struct SecurityView: View {
             Button("Initiate", role: .destructive) { Task { await model.securityAction("initiate") } }
         } message: {
             Text("The red screens come up on the PC. If the password isn't entered in time, Windows is locked.")
+        }
+        .sheet(isPresented: $showRecordings) {
+            RecordingsView()
         }
     }
 
