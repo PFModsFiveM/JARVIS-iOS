@@ -80,6 +80,10 @@ struct SmartDeviceTile: View {
                 PowerSwitch(device: device, enabled: reachable && device.shown != .updating) { on in
                     Task { await home.setPower(device, on: on) }
                 }
+            } else if device.canPress {
+                Button(HUD.spaced("Press")) { Task { await home.press(device) } }
+                    .buttonStyle(HUDButtonStyle())
+                    .disabled(!reachable || device.shown == .updating)
             }
         }
         .padding(12)
@@ -255,13 +259,22 @@ struct SmartDeviceView: View {
                     }
                     .frame(maxWidth: .infinity)
 
-                    if device.canSwitch {
+                    if device.canSwitch || device.canPress {
                         HUDFrame(title: "Power") {
-                            PowerSwitch(device: device, enabled: model.link.isOnline && device.shown != .updating) { on in
-                                Task { await home.setPower(device, on: on) }
+                            if device.canSwitch {
+                                PowerSwitch(device: device, enabled: model.link.isOnline && device.shown != .updating) { on in
+                                    Task { await home.setPower(device, on: on) }
+                                }
+                            } else {
+                                // A Bot on a push button: on and off are the same press, so a
+                                // two-position switch would be a promise the hardware cannot keep.
+                                Text("This one is on a push button, so there is one press rather than on and off.")
+                                    .font(.footnote)
+                                    .foregroundStyle(HUD.dim)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
 
-                            if device.capabilities.contains("press") {
+                            if device.canPress {
                                 Button("Single press") { Task { await home.press(device) } }
                                     .buttonStyle(HUDButtonStyle())
                                     .disabled(!model.link.isOnline || device.shown == .updating)

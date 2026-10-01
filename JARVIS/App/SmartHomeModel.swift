@@ -30,7 +30,13 @@ struct SmartDevice: Identifiable, Equatable {
     /// What went wrong, in the words JARVIS would say it. Nil when nothing did.
     let problem: String?
 
+    /// Whether ON and OFF mean different things. False for a Bot on a push button, where they do not.
     var canSwitch: Bool { bound && capabilities.contains("powerOn") && status != .notSetUp }
+
+    /// Whether a single press can be asked for. The only control a push-button Bot has, so a screen
+    /// that offers nothing when this is true and `canSwitch` is false leaves the device unreachable
+    /// from the phone while the PC and voice can still work it.
+    var canPress: Bool { bound && capabilities.contains("press") && status != .notSetUp }
     var isOn: Bool { status == .on }
     var isOff: Bool { status == .off }
 
