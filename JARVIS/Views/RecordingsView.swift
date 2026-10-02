@@ -10,6 +10,9 @@ struct SecurityRecording: Identifiable, Equatable {
     let snapshots: Int
     let clips: [Clip]
 
+    /// Whether it has been seen. "Hidden" on this screen; `Acknowledged` on the PC.
+    var seen: Bool
+
     struct Clip: Equatable {
         let kind: String
         let name: String
@@ -21,6 +24,12 @@ struct SecurityRecording: Identifiable, Equatable {
 
     var evidence: Clip? { clips.first(where: { $0.isEvidence }) }
     var camera: Clip? { clips.first(where: { !$0.isEvidence }) }
+
+    /// Whether it happened recently enough to want looking at now.
+    ///
+    /// A day rather than an hour: somebody who was out all afternoon should come back to the
+    /// afternoon's incidents under Recent, not have to go hunting for them under Earlier.
+    var isRecent: Bool { at > Date.now.addingTimeInterval(-86_400) }
 
     /// How it reads in a list.
     var summary: String {
@@ -58,13 +67,13 @@ final class RecordingsModel: ObservableObject {
 
         do {
             let reply = try await model.session().request("camera.recordings", [:], timeout: 20)
-            recordings = (reply.body["recordings"] as? [[String: Any]] ?? []).compactMap(Self.read)
+            accept(reply.body["recordings"] as? [[String: Any]] ?? [])
         } catch {
             trouble = error.localizedDescription
         }
     }
 
-    private static func read(_ body: [String: Any]) -> SecurityRecording? {
+    static func read(_ body: [String: Any]) -> SecurityRecording? {
         guard let id = body["id"] as? String else { return nil }
 
         let clips = (body["clips"] as? [[String: Any]] ?? []).compactMap { clip -> SecurityRecording.Clip? in
@@ -79,7 +88,45 @@ final class RecordingsModel: ObservableObject {
             seconds: (body["seconds"] as? NSNumber)?.intValue ?? 0,
             what: body["what"] as? String ?? "Something happened",
             snapshots: (body["snapshots"] as? NSNumber)?.intValue ?? 0,
-            clips: clips)
+            clips: clips,
+            seen: body["acknowledged"] as? Bool ?? false)
+    }
+
+    /// Takes the PC's list.
+    ///
+    /// Separate from <c>load</c> so the grouping can be tested without a PC: the sections are the
+    /// part with rules in them, and rules that only run against a live bridge are rules nobody
+    /// checks.
+    func accept(_ rows: [[String: Any]]) {
+        recordings = rows.compactMap(Self.read)
+    }
+
+    /// The ones worth looking at, newest first.
+    var recent: [SecurityRecording] { recordings.filter { !$0.seen && $0.isRecent } }
+
+    /// Older, and still not seen.
+    var earlier: [SecurityRecording] { recordings.filter { !$0.seen && !$0.isRecent } }
+
+    /// Hidden, kept rather than deleted - and still watchable.
+    var hidden: [SecurityRecording] { recordings.filter(\.seen) }
+
+    /// Hides an incident, or puts it back.
+    ///
+    /// Drawn before the PC answers, because the tap should feel like it did something, and put
+    /// back if the PC refuses - the list is the PC's, and a phone that quietly disagreed with it
+    /// would be worse than one that flickered.
+    func hide(_ recording: SecurityRecording, _ seen: Bool) async {
+        guard let index = recordings.firstIndex(where: { $0.id == recording.id }) else { return }
+
+        let before = recordings[index].seen
+        recordings[index].seen = seen
+
+        do {
+            _ = try await model.session().request("camera.event.ack", ["id": recording.id, "seen": seen], timeout: 10)
+        } catch {
+            recordings[index].seen = before
+            trouble = "That didn't reach your PC, so nothing changed."
+        }
     }
 
     /// Fetches one recording to a file and offers it for playing.
@@ -148,6 +195,9 @@ final class RecordingsModel: ObservableObject {
 struct RecordingsView: View {
     @StateObject private var recordings = RecordingsModel()
 
+    /// Hidden incidents are collapsed, not gone. Off each time the screen opens.
+    @State private var showHidden = false
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -168,29 +218,29 @@ struct RecordingsView: View {
                     }
                 }
 
-                ForEach(recordings.recordings) { one in
-                    HUDFrame(title: one.at.formatted(date: .abbreviated, time: .shortened), tint: HUD.alert) {
-                        Text(one.summary).font(.footnote).foregroundStyle(HUD.dim)
+                // Recent first and on its own, because the question somebody opens this screen
+                // with is "what happened while I was out", and a week of incidents in one flat
+                // list answers it slowly.
+                if !recordings.recent.isEmpty {
+                    HUDLabel(text: "Recent", color: HUD.alert)
+                    ForEach(recordings.recent) { one in card(one) }
+                }
 
-                        if recordings.fetching == one.id {
-                            ProgressView(value: recordings.progress).tint(HUD.accent)
-                        } else {
-                            // The composite first, because it answers more: the screen is what
-                            // somebody did and the face is who did it.
-                            if one.evidence != nil {
-                                Button("Screen + camera") {
-                                    Task { await recordings.fetch(one, kind: "Evidence") }
-                                }
-                                .buttonStyle(HUDButtonStyle())
-                            }
+                if !recordings.earlier.isEmpty {
+                    HUDLabel(text: "Earlier", color: HUD.accent)
+                    ForEach(recordings.earlier) { one in card(one) }
+                }
 
-                            if one.camera != nil {
-                                Button("Camera only") {
-                                    Task { await recordings.fetch(one, kind: "Camera") }
-                                }
-                                .buttonStyle(HUDButtonStyle())
-                            }
-                        }
+                if !recordings.hidden.isEmpty {
+                    Button(showHidden
+                           ? "Hide \(recordings.hidden.count) seen"
+                           : "Show \(recordings.hidden.count) seen") {
+                        withAnimation { showHidden.toggle() }
+                    }
+                    .buttonStyle(HUDButtonStyle())
+
+                    if showHidden {
+                        ForEach(recordings.hidden) { one in card(one) }
                     }
                 }
             }
@@ -205,6 +255,44 @@ struct RecordingsView: View {
             set: { if $0 == nil { recordings.playing = nil } })) { item in
             VideoPlayer(player: AVPlayer(url: item.url))
                 .ignoresSafeArea()
+        }
+    }
+
+    /// One incident: what it was, what there is to watch, and a way to put it away.
+    @ViewBuilder
+    private func card(_ one: SecurityRecording) -> some View {
+        HUDFrame(
+            title: one.at.formatted(date: .abbreviated, time: .shortened),
+            tint: one.seen ? HUD.dim : HUD.alert
+        ) {
+            Text(one.summary).font(.footnote).foregroundStyle(HUD.dim)
+
+            if recordings.fetching == one.id {
+                ProgressView(value: recordings.progress).tint(HUD.accent)
+            } else {
+                // The composite first, because it answers more: the screen is what somebody
+                // did and the face is who did it.
+                if one.evidence != nil {
+                    Button("Screen + camera") {
+                        Task { await recordings.fetch(one, kind: "Evidence") }
+                    }
+                    .buttonStyle(HUDButtonStyle())
+                }
+
+                if one.camera != nil {
+                    Button("Camera only") {
+                        Task { await recordings.fetch(one, kind: "Camera") }
+                    }
+                    .buttonStyle(HUDButtonStyle())
+                }
+
+                // Hiding keeps it. Nothing on this screen deletes a recording, because the one
+                // time that matters is the time somebody taps it by accident.
+                Button(one.seen ? "Put back" : "Hide") {
+                    Task { await recordings.hide(one, !one.seen) }
+                }
+                .buttonStyle(HUDButtonStyle())
+            }
         }
     }
 
