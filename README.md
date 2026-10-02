@@ -61,7 +61,11 @@ private networks when asked), press *Pair an iPhone*, and approve when the six d
 - **Smart home** (Home tab): the house's lights and switches - today the Bedroom Light, a SwitchBot Bot on the
   rocker - one tile per device, grouped by room. ON and OFF switch it through the PC, UPDATING shows while the
   command is out, and "On (unconfirmed)" means the command was accepted but the device has not yet said so. A
-  change made anywhere - the PC's HUD, the voice, another phone - is pushed here as it happens. The phone never
+  tile can stay unconfirmed for up to half a minute, and that is the PC being careful rather than slow: SwitchBot's
+  cloud reports the state from *before* a command for a few seconds afterwards, so the PC keeps reading until the
+  device agrees and publishes nothing that contradicts what was just asked for. A tile that flips back on its own
+  is a bug, not a slow hub. A change made anywhere - the PC's HUD, the voice, another phone - is pushed here as it
+  happens. The phone never
   holds a SwitchBot token, secret or device id: it asks the PC, and the PC's Device Service talks to SwitchBot.
   So with the PC off nothing can be switched from here, and the tile says so; wake the PC first. The PC side,
   including setting up the hardware, is `docs/SMART-HOME-AND-SWITCHBOT.md` in the J.A.R.V.I.S repository.
