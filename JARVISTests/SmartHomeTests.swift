@@ -82,6 +82,23 @@ final class SmartHomeTests: XCTestCase {
         XCTAssertEqual(pending.status, .on, "the PC's own word stands until the PC says otherwise")
     }
 
+    func testABotOnAPushButtonCanStillBePressed() throws {
+        // PreferPress on the PC means the device has no on and no off - the bridge sends only
+        // "press". The screens key off canSwitch, so without canPress such a device would be
+        // listed with no control at all while the PC and voice could still work it.
+        let device = try XCTUnwrap(SmartDevice(row(["capabilities": ["press"], "status": "unknown", "certainty": "unknown"])))
+
+        XCTAssertFalse(device.canSwitch)
+        XCTAssertTrue(device.canPress)
+    }
+
+    func testANotSetUpDeviceOffersNoPressEither() throws {
+        let device = try XCTUnwrap(SmartDevice(row(["status": "notSetUp", "bound": false, "capabilities": ["press"]])))
+
+        XCTAssertFalse(device.canSwitch)
+        XCTAssertFalse(device.canPress)
+    }
+
     @MainActor
     func testRoomsAreGroupedAndADeviceWithNoRoomComesLast() throws {
         let home = SmartHomeModel(model: .shared)
