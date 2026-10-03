@@ -126,6 +126,8 @@ struct SettingsView: View {
 
                 StandbySection()
 
+                StoreSection()
+
                 WhereaboutsSection(reporter: model.whereabouts)
 
                 LearningSection(learning: LearningModel.shared)
@@ -307,6 +309,57 @@ struct StandbySection: View {
 
         let names = home.standby.map(\.name).sorted().joined(separator: ", ")
         return "This phone has a SwitchBot token and can work \(names) while your PC is off. The Hub still has to be powered and online: if it is plugged into the PC's USB, it loses power with the PC."
+    }
+}
+
+/// The bucket credential this phone reads the shared store with.
+///
+/// The store is where the PC puts what the camera kept, so the phone can read it with the PC off.
+/// The PC hands over the bucket's coordinates and the sealing key - that part needs Face ID - and
+/// deliberately does not hand over a credential, so this one can be scoped read-only. A phone that
+/// is lost then reads what it could already read and cannot delete or overwrite the bucket.
+///
+/// `SecureField`, so the secret is never on screen, never in a screenshot and never in the
+/// keyboard's own learning. Once stored it is not read back out.
+struct StoreSection: View {
+    @ObservedObject private var stored = FootageModel.shared
+
+    @State private var keyId = ""
+    @State private var secret = ""
+
+    var body: some View {
+        HUDFrame(title: "Watching the camera without your PC") {
+            Text(stored.summary)
+                .font(.footnote).foregroundStyle(HUD.dim)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if stored.credentials == nil {
+                Text("Make a read-only API token for the bucket - in Cloudflare, R2 \u{203A} Manage API tokens, Object Read only - and put it here. It is kept in this phone's Keychain, never synced to iCloud and never sent to your PC.\n\nThere is no live view with your PC off, and there cannot be: the camera is plugged into the PC. What this reads is what the PC already uploaded.")
+                    .font(.footnote).foregroundStyle(HUD.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                SecureField("Access key ID", text: $keyId)
+                    .textFieldStyle(.roundedBorder)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                SecureField("Secret access key", text: $secret)
+                    .textFieldStyle(.roundedBorder)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+
+                Button(HUD.spaced("Save to the Keychain")) {
+                    stored.remember(accessKeyId: keyId, secretAccessKey: secret)
+                    keyId = ""
+                    secret = ""
+                    Task { await stored.refresh() }
+                }
+                .buttonStyle(HUDButtonStyle())
+                .disabled(keyId.isEmpty || secret.isEmpty)
+            } else {
+                Button(HUD.spaced("Forget the store")) { stored.leave() }
+                    .buttonStyle(HUDButtonStyle())
+            }
+        }
     }
 }
 

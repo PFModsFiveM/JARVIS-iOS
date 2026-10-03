@@ -194,6 +194,8 @@ final class RecordingsModel: ObservableObject {
 /// What the camera kept, to watch on the phone.
 struct RecordingsView: View {
     @StateObject private var recordings = RecordingsModel()
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject private var stored = FootageModel.shared
 
     /// Hidden incidents are collapsed, not gone. Off each time the screen opens.
     @State private var showHidden = false
@@ -211,6 +213,14 @@ struct RecordingsView: View {
 
                 if recordings.loading {
                     HUDFrame { Text("Reading…").foregroundStyle(HUD.dim) }
+                } else if recordings.recordings.isEmpty && !model.link.isOnline {
+                    // Not "nothing was recorded": the PC is the only thing that knows that, and it
+                    // is not answering. What the store holds is a different question, below.
+                    HUDFrame {
+                        Text("Your PC isn't answering, so this is whatever it uploaded before it went off.")
+                            .font(.footnote).foregroundStyle(HUD.dim)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 } else if recordings.recordings.isEmpty {
                     HUDFrame {
                         Text("Nothing has been recorded in the last week.")
@@ -230,6 +240,12 @@ struct RecordingsView: View {
                     HUDLabel(text: "Earlier", color: HUD.accent)
                     ForEach(recordings.earlier) { one in card(one) }
                 }
+
+                // What the store holds, which is the only thing readable with the PC off. Shown
+                // below the PC's own list rather than mixed into it: the PC knows everything and
+                // the store knows what was uploaded, and running them together would make it
+                // impossible to tell which answered.
+                StoredFootageSection()
 
                 if !recordings.hidden.isEmpty {
                     Button(showHidden
@@ -299,5 +315,96 @@ struct RecordingsView: View {
     private struct Playing: Identifiable {
         let url: URL
         var id: String { url.path }
+    }
+}
+
+/// What the shared store holds, which is what can be watched with the PC off.
+///
+/// Deliberately its own section rather than mixed into the PC's list. The PC knows about every
+/// incident; the store knows about the ones it managed to upload, and each row says exactly what of
+/// it is there - the details, a still, or the whole recording. Running the two together would make
+/// it impossible to tell which answered, and "ready to watch" means different things to each.
+struct StoredFootageSection: View {
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject private var stored = FootageModel.shared
+
+    @State private var joining = false
+    @State private var said: String?
+    @State private var fetching: String?
+    @State private var playing: URL?
+
+    /// Its own, because RecordingsView's is private to it.
+    private struct Watching: Identifiable {
+        let url: URL
+        var id: String { url.path }
+    }
+
+    var body: some View {
+        HUDFrame(title: "Without your PC") {
+            Text(stored.summary)
+                .font(.footnote).foregroundStyle(HUD.dim)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let said {
+                Text(said)
+                    .font(.footnote).foregroundStyle(HUD.accent)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if stored.coordinates == nil || stored.vault == nil {
+                Button(HUD.spaced(joining ? "Joining..." : "Join the store")) {
+                    joining = true
+                    Task {
+                        said = await stored.join()
+                        joining = false
+                    }
+                }
+                .buttonStyle(HUDButtonStyle())
+                .disabled(joining || !model.link.isOnline)
+            } else {
+                Button(HUD.spaced(stored.reading ? "Reading..." : "Read the store")) {
+                    Task { await stored.refresh() }
+                }
+                .buttonStyle(HUDButtonStyle())
+                .disabled(stored.reading || !stored.ready)
+            }
+
+            ForEach(stored.incidents) { incident in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(incident.summary)
+                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(HUD.text)
+
+                    Text(incident.startedAt.formatted(date: .abbreviated, time: .standard))
+                        .font(.caption).foregroundStyle(HUD.dim)
+
+                    // The honest line. A row whose recording is still going up says so rather
+                    // than offering a play button that would hand back something unplayable.
+                    Text(incident.availability)
+                        .font(.caption)
+                        .foregroundStyle(incident.clipComplete ? HUD.accent : HUD.amber)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if incident.clipComplete {
+                        Button(fetching == incident.id ? "Fetching…" : "Watch (\(incident.size))") {
+                            fetching = incident.id
+                            Task {
+                                playing = await stored.download(incident)
+                                fetching = nil
+                            }
+                        }
+                        .buttonStyle(HUDButtonStyle())
+                        .disabled(fetching != nil)
+                    }
+                }
+                .padding(.vertical, 6)
+            }
+        }
+        .sheet(item: Binding(
+            get: { playing.map(Watching.init) },
+            set: { if $0 == nil { playing = nil } })) { item in
+            VideoPlayer(player: AVPlayer(url: item.url))
+                .ignoresSafeArea()
+        }
     }
 }
