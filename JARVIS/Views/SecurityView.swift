@@ -57,6 +57,35 @@ struct SecurityView: View {
                         .font(.footnote).foregroundStyle(HUD.dim)
                 }
 
+                // The room as it is now, next to what the camera kept - the two questions somebody
+                // asks when their phone buzzes, one after the other.
+                HUDFrame(title: "The room, live") {
+                    if let frame = model.cameraFrame {
+                        Image(uiImage: frame)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+
+                    if model.watchingCamera {
+                        if model.cameraFrame == nil {
+                            Text("Waiting for a frame…").font(.footnote).foregroundStyle(HUD.dim)
+                        }
+
+                        Button("Stop watching") { Task { await model.stopWatchingCamera() } }
+                            .buttonStyle(HUDButtonStyle())
+                    } else {
+                        Button("Watch the camera") { Task { await model.startWatchingCamera() } }
+                            .buttonStyle(HUDButtonStyle())
+
+                        // Said before it is tried, because the refusal is the common case and it
+                        // is not a fault: the camera runs when security mode or the PC's own
+                        // camera panel is on, and watching from here never switches it on.
+                        Text("Shows what the camera is already seeing. It won't switch the camera on.")
+                            .font(.footnote).foregroundStyle(HUD.dim)
+                    }
+                }
+
                 HUDFrame(title: "Status", tint: tint) {
                     if let security = model.security {
                         Text(security.description.capitalizedFirst)
@@ -111,6 +140,11 @@ struct SecurityView: View {
         .background(HUDBackdrop().ignoresSafeArea())
         .refreshable { await model.refresh() }
         .task { await model.refresh() }
+
+        // Leaving the tab stops the stream. Frames are a few tens of kilobytes each and somebody
+        // who switched away is not watching; charging them for it until they notice would be the
+        // sort of thing you only find on next month's bill.
+        .onDisappear { Task { await model.stopWatchingCamera() } }
         .confirmationDialog("Initiate the Security Protocol now?", isPresented: $confirmInitiate, titleVisibility: .visible) {
             Button("Initiate", role: .destructive) { Task { await model.securityAction("initiate") } }
         } message: {

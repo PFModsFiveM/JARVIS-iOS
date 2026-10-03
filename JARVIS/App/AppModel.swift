@@ -112,6 +112,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var liveDisplay: Int?
     @Published private(set) var screenFrame: UIImage?
     @Published private(set) var screenFramesPerSecond = 0.0
+
+    /// The room, live. Nil when nothing is being watched.
+    @Published private(set) var cameraFrame: UIImage?
+    @Published private(set) var watchingCamera = false
+    private var newestCameraFrame = -1
     /// The phone has control of the PC's keyboard and mouse on this connection (Face ID once).
     @Published private(set) var controlling = false
     /// The PC's sound is playing on the phone.
@@ -1214,6 +1219,56 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Face ID, then the PC sends what the camera is already seeing.
+    ///
+    /// It will refuse if nothing is looking through the camera, and that refusal is passed on
+    /// rather than worked around: the camera has one owner, and a page being opened on a phone is
+    /// not a reason to take it from the security watcher.
+    func startWatchingCamera() async {
+        do {
+            let client = try await session()
+            let body: [String: Any] = ["network": network.cellular ? "cellular" : "wifi"]
+            var reply = try await client.request("camera.live.start", body)
+
+            if reply.kind != "done" && reply.message.contains("Face ID") {
+                reply = try await client.approvedRequest("camera.live.start", reason: "Watch your PC's camera", body)
+            }
+
+            if reply.kind == "done" {
+                cameraFrame = nil
+                newestCameraFrame = -1
+                watchingCamera = true
+            } else {
+                toast = reply.message
+            }
+        } catch {
+            toast = error.localizedDescription
+        }
+    }
+
+    func stopWatchingCamera() async {
+        watchingCamera = false
+        cameraFrame = nil
+        _ = try? await client?.request("camera.live.stop")
+    }
+
+    /// Decoded off the main thread, and a frame that finishes decoding after a newer one is dropped.
+    private func receiveCameraFrame(_ message: BridgeMessage) {
+        guard watchingCamera,
+              let sequence = (message.body["sequence"] as? NSNumber)?.intValue,
+              let jpeg = message.text("jpeg"), let data = Data(base64Encoded: jpeg) else { return }
+
+        Task.detached(priority: .userInitiated) {
+            guard let image = UIImage(data: data)?.preparingForDisplay() else { return }
+            await MainActor.run {
+                let model = AppModel.shared
+                guard model.watchingCamera, sequence > model.newestCameraFrame || sequence == 0 else { return }
+                model.newestCameraFrame = sequence
+                model.cameraFrame = image
+            }
+        }
+    }
+
     // MARK: the PC's sound and camera
 
     /// Face ID once per connection (the same grant as watching), then the PC's speakers play here.
@@ -1374,6 +1429,7 @@ final class AppModel: ObservableObject {
     private func handlePush(_ message: BridgeMessage) {
         if message.kind == "voice" { receiveVoice(message); return }
         if message.kind == "screen.frame" { receiveFrame(message); return }
+        if message.kind == "camera.frame" { receiveCameraFrame(message); return }
         if message.kind == "file.data" { ControlModel.shared.receiveFileData(message); return }
         if message.kind == "notice" { receiveNotice(message); return }
         if message.kind == "devices.changed" { SmartHomeModel.shared.receive(message); return }
