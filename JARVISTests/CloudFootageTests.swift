@@ -272,8 +272,9 @@ final class CloudFootageTests: XCTestCase {
         ])
 
         let incident = await reader.list()[0]
+        let whole = await reader.clip(incident)
 
-        XCTAssertEqual(await reader.clip(incident), first + second)
+        XCTAssertEqual(whole, first + second)
     }
 
     func testHalfARecordingIsNeverOfferedAsARecording() async throws {
@@ -285,10 +286,11 @@ final class CloudFootageTests: XCTestCase {
         ])
 
         let incident = await reader.list()[0]
+        let whole = await reader.clip(incident)
 
         XCTAssertFalse(incident.clipComplete)
         XCTAssertEqual(incident.availability, "Still uploading - 1 of 4 parts.")
-        XCTAssertNil(await reader.clip(incident))
+        XCTAssertNil(whole)
     }
 
     func testAPartMissingFromTheStoreRefusesRatherThanPatchingTheVideo() async throws {
@@ -298,9 +300,10 @@ final class CloudFootageTests: XCTestCase {
         ])
 
         let incident = await reader.list()[0]
+        let whole = await reader.clip(incident)
 
         XCTAssertTrue(incident.clipComplete)
-        XCTAssertNil(await reader.clip(incident))
+        XCTAssertNil(whole)
     }
 
     func testAStillComesBackWhenThereIsOne() async throws {
@@ -311,8 +314,11 @@ final class CloudFootageTests: XCTestCase {
             "footage/DOM-PC/clips/evt-1/thumb": try seal(still)
         ])
 
-        XCTAssertEqual(await reader.thumbnail("evt-1"), still)
-        XCTAssertNil(await reader.thumbnail("evt-2"))
+        let found = await reader.thumbnail("evt-1")
+        let missing = await reader.thumbnail("evt-2")
+
+        XCTAssertEqual(found, still)
+        XCTAssertNil(missing)
     }
 
     func testEveryRequestIsSigned() async throws {
@@ -337,7 +343,9 @@ final class CloudFootageTests: XCTestCase {
             vault: vault,
             wiring: wiring)
 
-        XCTAssertTrue(await reader.list().isEmpty)
+        let found = await reader.list()
+
+        XCTAssertTrue(found.isEmpty)
     }
 
     func testAListingThatIsNotWhatWeExpectYieldsNoKeysRatherThanCrashing() {
