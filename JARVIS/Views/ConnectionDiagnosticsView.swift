@@ -178,13 +178,7 @@ struct ConnectionDiagnosticsView: View {
     private var strategyText: String {
         let order = WakeOnLanService.strategies(for: model.wakeProfile, cellular: model.onCellular)
         if order.isEmpty { return model.onCellular ? "nothing set up for outside the house" : "not set up" }
-        return order.map { strategy in
-            switch strategy {
-            case .localBroadcast: return "home broadcast"
-            case .remoteRouter: return "through the router"
-            case .powerButton: return "the Bot on its power button"
-            }
-        }.joined(separator: ", then ")
+        return order.map { $0 == .localBroadcast ? "home broadcast" : "through the router" }.joined(separator: ", then ")
     }
 
     private func explain(_ source: BridgeCandidate.Source) -> String {
