@@ -271,7 +271,7 @@ final class SmartHomeModel: ObservableObject {
     /// For the spoken and typed paths, which name a device rather than tapping a row, and which may
     /// be running with the PC off and no device list to tap. Goes through exactly the same routing
     /// and the same wording as the panel's switch, so the two cannot drift.
-    func work(_ id: String, _ command want: StandbyCommand) async -> String {
+    func work(_ id: String, _ want: StandbyCommand) async -> String {
         guard let device = shown.first(where: { $0.id == id }) else {
             return "I don't know a device by that name."
         }
