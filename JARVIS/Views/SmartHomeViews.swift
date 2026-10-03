@@ -2,8 +2,14 @@ import SwiftUI
 
 /// The smart-home devices on the Home tab: one tile per device, grouped by room.
 ///
-/// Every tile switches the device through the PC - never through a vendor - and draws whatever the
-/// PC says afterwards, including a change made on the PC itself or by voice, which arrives as a push.
+/// Every tile switches the device through the PC whenever the PC is answering - it owns the state,
+/// confirms the switch and pushes the change to every other phone - and draws whatever the PC says
+/// afterwards, including a change made on the PC itself or by voice.
+///
+/// With the PC not answering the tiles stay, and a tile this phone was taught to reach goes straight
+/// to the vendor instead; one that it was not says so rather than offering a switch that fails.
+/// `SmartHomeModel.canWork` decides which, so the enabling and the explaining cannot disagree.
+///
 /// Two buttons rather than a toggle: the Bedroom Light's Bot is on a rocker in switch mode, and a
 /// toggle whose current state is unknown cannot say what pressing it will do. ON always means on.
 struct SmartHomePanel: View {
@@ -11,14 +17,14 @@ struct SmartHomePanel: View {
     @ObservedObject var home = SmartHomeModel.shared
 
     var body: some View {
-        if !home.devices.isEmpty {
+        if !home.shown.isEmpty {
             HUDFrame(title: "Smart home") {
                 ForEach(home.rooms) { room in
                     VStack(alignment: .leading, spacing: 10) {
                         HUDLabel(text: room.room, color: HUD.accentDeep)
                         ForEach(room.devices) { device in
                             NavigationLink { SmartDeviceView(id: device.id) } label: {
-                                SmartDeviceTile(device: device, message: home.messages[device.id], reachable: model.link.isOnline)
+                                SmartDeviceTile(device: device, message: home.messages[device.id], reachable: home.canWork(device))
                             }
                             .buttonStyle(.plain)
                         }
@@ -29,8 +35,10 @@ struct SmartHomePanel: View {
                     HUDLabel(text: "Simulation - nothing in the house moves", color: HUD.amber)
                 }
 
-                if !model.link.isOnline {
-                    Text("Switched through your PC, which isn't answering. Wake it, or wait for it to reconnect.")
+                // One sentence, from the model, so the panel and the chat say the same thing about
+                // why something cannot be switched - or that it is going round the PC.
+                if let summary = home.standbySummary {
+                    Text(summary)
                         .font(.footnote)
                         .foregroundStyle(HUD.dim)
                         .fixedSize(horizontal: false, vertical: true)
@@ -234,7 +242,9 @@ struct SmartDeviceView: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var home = SmartHomeModel.shared
 
-    private var device: SmartDevice? { home.devices.first { $0.id == id } }
+    // From `shown` rather than `devices`, so this page still opens with the PC off and a binding
+    // this phone was taught - with the state shown as unknown, which is what it is.
+    private var device: SmartDevice? { home.shown.first { $0.id == id } }
 
     var body: some View {
         ScrollView {
@@ -262,7 +272,7 @@ struct SmartDeviceView: View {
                     if device.canSwitch || device.canPress {
                         HUDFrame(title: "Power") {
                             if device.canSwitch {
-                                PowerSwitch(device: device, enabled: model.link.isOnline && device.shown != .updating) { on in
+                                PowerSwitch(device: device, enabled: home.canWork(device) && device.shown != .updating) { on in
                                     Task { await home.setPower(device, on: on) }
                                 }
                             } else {
@@ -277,7 +287,7 @@ struct SmartDeviceView: View {
                             if device.canPress {
                                 Button("Single press") { Task { await home.press(device) } }
                                     .buttonStyle(HUDButtonStyle())
-                                    .disabled(!model.link.isOnline || device.shown == .updating)
+                                    .disabled(!home.canWork(device) || device.shown == .updating)
                             }
                         }
                     }
@@ -289,8 +299,11 @@ struct SmartDeviceView: View {
                         Readout(label: "Last read", value: device.readAt.map(SmartDeviceTile.ago) ?? "Never")
                         if let battery = device.battery { Readout(label: "Battery", value: "\(battery)%") }
                         Readout(label: "Last command", value: lastCommand(device))
-                        Readout(label: "Reached via", value: device.simulated ? "Your PC (simulation)" : "Your PC")
+                        Readout(label: "Reached via", value: reachedVia(device))
 
+                        // Reading a device costs a vendor request, and the PC rate-limits it. With
+                        // the PC off there is nothing here that can: the read-back after a command
+                        // is the only vendor read this phone makes by itself.
                         Button("Read it now") { Task { await home.refresh(device.id) } }
                             .buttonStyle(HUDButtonStyle())
                             .disabled(!model.link.isOnline)
@@ -298,7 +311,7 @@ struct SmartDeviceView: View {
 
                     if !device.bound {
                         HUDFrame(title: "Set up") {
-                            Text("Nothing is assigned to \(device.name) yet. When the hardware is paired in the SwitchBot app, open JARVIS on the PC › Settings › Smart Home, discover devices and assign the Bot. The phone never needs the SwitchBot password or keys.")
+                            Text("Nothing is assigned to \(device.name) yet. When the hardware is paired in the SwitchBot app, open JARVIS on the PC › Settings › Smart Home, discover devices and assign the Bot. Your SwitchBot password is never needed anywhere, and the PC's own token stays on the PC.")
                                 .font(.footnote)
                                 .foregroundStyle(HUD.dim)
                         }
@@ -321,6 +334,17 @@ struct SmartDeviceView: View {
         .hudTitle(device?.name ?? "Device")
         .refreshable { await home.refresh(id) }
         .task { await home.refresh(id) }
+    }
+
+    /// Which way a command to this device would actually go, right now.
+    private func reachedVia(_ device: SmartDevice) -> String {
+        if device.simulated { return "Your PC (simulation)" }
+
+        switch home.route(device.id, device.canSwitch ? .on : .press) {
+        case .pc: return "Your PC"
+        case .direct(let binding): return "\(binding.provider), without your PC"
+        case .nothing: return "Nothing can reach it right now"
+        }
     }
 
     private func certainty(_ device: SmartDevice) -> String {

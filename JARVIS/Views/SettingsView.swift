@@ -124,6 +124,8 @@ struct SettingsView: View {
                         .font(.footnote).foregroundStyle(HUD.dim)
                 }
 
+                StandbySection()
+
                 WhereaboutsSection(reporter: model.whereabouts)
 
                 LearningSection(learning: LearningModel.shared)
@@ -236,6 +238,78 @@ struct SettingsView: View {
 /// permission would have left this toggle showing off until the screen was left and come back to.
 /// Elsewhere this codebase mirrors nested state onto the app model for the same reason - that is
 /// right for one value, and four would be four things to keep in step.
+/// The one thing this phone needs to switch a light while the PC is off: its own SwitchBot token.
+///
+/// Typed in here, kept in the Keychain and nowhere else, and never sent anywhere but SwitchBot. The
+/// PC is not asked for it and cannot supply it: a bridge request that could hand a token over would
+/// be a way to take the account from any phone that ever paired, and one revocable token in two
+/// places is the cheaper risk.
+///
+/// The field is a `SecureField`, so the value is never on screen, never in a screenshot and never in
+/// the keyboard's own learning. Once stored it is not read back out - the section says it has one.
+struct StandbySection: View {
+    @ObservedObject private var home = SmartHomeModel.shared
+
+    @State private var token = ""
+    @State private var secret = ""
+    @State private var saved = false
+
+    var body: some View {
+        HUDFrame(title: "Switching lights without the PC") {
+            if home.credentials != nil {
+                Text(stored)
+                    .font(.footnote).foregroundStyle(HUD.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Button(HUD.spaced("Forget the token")) {
+                    home.forgetCredentials()
+                    token = ""
+                    secret = ""
+                    saved = false
+                }
+                .buttonStyle(HUDButtonStyle())
+            } else {
+                Text("Normally a light is switched through your PC, which is right: it keeps the state and tells every other device what changed. A PC that is off cannot pass the command on, though - so with a SwitchBot token of its own, this phone can send it directly instead.\n\nFind the token and secret in the SwitchBot app under Profile \u{203A} Preferences \u{203A} Developer Options. They are kept in this phone's Keychain, never synced to iCloud and never sent to your PC.")
+                    .font(.footnote).foregroundStyle(HUD.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                SecureField("Token", text: $token)
+                    .textFieldStyle(.roundedBorder)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                SecureField("Secret", text: $secret)
+                    .textFieldStyle(.roundedBorder)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+
+                Button(HUD.spaced("Save to the Keychain")) {
+                    home.remember(token: token, secret: secret)
+                    token = ""
+                    secret = ""
+                    saved = home.credentials != nil
+                }
+                .buttonStyle(HUDButtonStyle())
+                .disabled(token.isEmpty || secret.isEmpty)
+
+                if saved && home.credentials == nil {
+                    Text("That did not look like a token and a secret.")
+                        .font(.footnote).foregroundStyle(HUD.amber)
+                }
+            }
+        }
+    }
+
+    /// What it can actually do with the token, which is not the same as having one.
+    private var stored: String {
+        if home.standby.isEmpty {
+            return "This phone has a SwitchBot token. It has not been told which devices it may work yet - connect to your PC once while it is on, and it will remember."
+        }
+
+        let names = home.standby.map(\.name).sorted().joined(separator: ", ")
+        return "This phone has a SwitchBot token and can work \(names) while your PC is off. The Hub still has to be powered and online: if it is plugged into the PC's USB, it loses power with the PC."
+    }
+}
+
 struct WhereaboutsSection: View {
     @ObservedObject var reporter: LocationReporter
 

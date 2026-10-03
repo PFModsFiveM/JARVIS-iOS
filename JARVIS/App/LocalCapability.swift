@@ -10,6 +10,13 @@ import Foundation
 /// So a small number of requests are answered here first. The rule for what belongs is narrow and
 /// worth keeping: **only what is impossible while the PC is off.** Anything else goes to the PC,
 /// where the understanding is, rather than being reimplemented in the phone's own words.
+///
+/// A light is the third member of that set, and only by the same test. Switching it normally goes
+/// through the PC and should: the PC owns the device state and tells every other phone what
+/// changed. But a PC that is off cannot relay a command to SwitchBot, so the choice is between this
+/// phone addressing the device itself and the light being unreachable until the PC wakes. The match
+/// is made against the devices the PC itself taught this phone, never against a word list - so the
+/// names here are JARVIS's names, and adding a device to the PC adds it here with no code at all.
 enum LocalCapability: Equatable {
     /// Turn a machine on. The name is the one the rest of JARVIS will use when a Home Node can do
     /// this too, so the button, the voice command and whatever comes later are one action.
@@ -20,11 +27,23 @@ enum LocalCapability: Equatable {
     /// which is what puts it here rather than on the PC.
     case state(target: String?)
 
+    /// Work a device this phone was taught to reach, because the PC cannot relay the command.
+    ///
+    /// Carries JARVIS's own device id, never the vendor's, so this is the same action the panel's
+    /// switch takes and the same one the PC would have taken.
+    case device(id: String, command: StandbyCommand)
+
     /// The capability's name, as the PC's own tool catalogue would write it.
     var action: String {
         switch self {
         case .wake: return "device.power.wake"
         case .state: return "device.power.state"
+        case .device(_, let command):
+            switch command {
+            case .on: return "devices.power.on"
+            case .off: return "devices.power.off"
+            case .press: return "devices.press"
+            }
         }
     }
 
@@ -32,6 +51,7 @@ enum LocalCapability: Equatable {
     var target: String? {
         switch self {
         case .wake(let target), .state(let target): return target
+        case .device(let id, _): return id
         }
     }
 
@@ -45,7 +65,7 @@ enum LocalCapability: Equatable {
     /// Deliberately conservative. It looks for a waking word and a machine word in the same
     /// sentence, so "wake me at seven" and "turn the lights on" are the PC's business, as they
     /// should be: a phone that grabbed those would be worse than one that grabbed nothing.
-    static func of(_ sentence: String) -> LocalCapability? {
+    static func of(_ sentence: String, devices: [StandbyDevice] = []) -> LocalCapability? {
         let words = sentence.lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { !$0.isEmpty }
@@ -57,10 +77,13 @@ enum LocalCapability: Equatable {
 
         guard words.contains(where: { waking.contains($0) }), words.contains(where: { machines.contains($0) }) else {
             // Not a request to switch something on. It may still be a question about one, which is
-            // the other thing that cannot be asked of a PC that is off.
-            return askingAboutAMachine(words, machines: machines)
-                ? .state(target: named(in: words, among: machines))
-                : nil
+            // the other thing that cannot be asked of a PC that is off - or a device this phone was
+            // taught to reach, which is the third.
+            if askingAboutAMachine(words, machines: machines) {
+                return .state(target: named(in: words, among: machines))
+            }
+
+            return aDeviceThisPhoneCanReach(words, devices: devices)
         }
 
         // "turn the computer off" and "shut the PC down" are the opposite request, and the PC can
@@ -98,6 +121,56 @@ enum LocalCapability: Equatable {
                      "running", "doing", "status", "state", "signed"]
 
         return words.contains(where: { about.contains($0) })
+    }
+
+    /// A device the PC taught this phone to reach, when the sentence clearly names one.
+    ///
+    /// Deliberately strict in both directions. Every word of the device's own name - or its room
+    /// and its kind - must be in the sentence, so "turn the light on" with two lights in the house
+    /// matches neither rather than guessing one; and the sentence must carry an unambiguous verb,
+    /// so "is the bedroom light on" is a question for the PC and not a command to switch it.
+    private static func aDeviceThisPhoneCanReach(_ words: [String], devices: [StandbyDevice]) -> LocalCapability? {
+        guard !devices.isEmpty else { return nil }
+
+        let asking = ["is", "are", "was", "has", "does", "did", "whats", "what", "hows", "how"]
+        guard !words.contains(where: { asking.contains($0) }) else { return nil }
+
+        let on = words.contains("on") || (words.contains("light") && words.contains("up"))
+        let off = words.contains("off") || words.contains("out")
+        let press = words.contains("press") || words.contains("toggle") || words.contains("flip")
+
+        // "turn it on and off" names two opposite things and is nobody's command.
+        guard !(on && off) else { return nil }
+
+        let command: StandbyCommand
+        if press { command = .press } else if on { command = .on } else if off { command = .off } else { return nil }
+
+        let said = Set(words)
+
+        let matches = devices.filter { device in
+            let name = pieces(device.name)
+            if !name.isEmpty && name.isSubset(of: said) { return true }
+
+            // "bedroom light" where the device is called something else but sits in the bedroom.
+            let room = pieces(device.room ?? "")
+            return !room.isEmpty && room.isSubset(of: said) && said.contains(device.kind.lowercased())
+        }
+
+        guard matches.count == 1, let only = matches.first else { return nil }
+
+        // A Bot on a push button has no on and off, and a switch has no bare press. Asked for the
+        // wrong one, the sentence goes to the PC, which can explain it better than a word list can.
+        if only.switches && command == .press { return nil }
+        if !only.switches && command != .press { return .device(id: only.id, command: .press) }
+
+        return .device(id: only.id, command: command)
+    }
+
+    /// A display name as the words it is made of, lower case.
+    private static func pieces(_ text: String) -> Set<String> {
+        Set(text.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty })
     }
 
     /// The machine the sentence named, when it named one in particular.

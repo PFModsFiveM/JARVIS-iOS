@@ -961,7 +961,12 @@ final class AppModel: ObservableObject {
         // The few requests this phone must answer itself, because the PC cannot: "wake my PC" sent
         // to a sleeping PC is a request with nowhere to go. One reading of the sentence, used by the
         // typed box, the wake word and Siri alike - so the button and the words are the same action.
-        if case .wake = LocalCapability.of(request), !link.isOnline {
+        // Read once, against what this phone was actually taught it can reach. Only consulted while
+        // the PC is not answering: with the PC up, every one of these goes to the PC, which
+        // understands the sentence better than any word list here and owns the device state.
+        let local = link.isOnline ? nil : LocalCapability.of(request, devices: SmartHomeModel.shared.standby)
+
+        if case .wake = local {
             lines.append(ChatLine(speaker: .jarvis, text: wakeAnswer()))
             wakePC()
             return
@@ -970,8 +975,21 @@ final class AppModel: ObservableObject {
         // And the other thing a sleeping PC cannot be asked: what it is doing. The pre-login
         // service can answer it when JARVIS cannot, and when JARVIS can, it goes to JARVIS - which
         // knows everything the service does and a great deal more.
-        if case .state = LocalCapability.of(request), !link.isOnline {
+        if case .state = local {
             let answer = await machineAnswer()
+            lines.append(ChatLine(speaker: .jarvis, text: answer))
+            if speakAnswers || spoken { voice.say(answer) }
+            return
+        }
+
+        // A light the PC cannot relay a command to, because it is off. The same action the panel's
+        // switch takes, with the same routing and the same wording - and the answer is whatever
+        // actually happened, including "sent, and I can't confirm it from here".
+        if case .device(let id, let command) = local {
+            thinking = true
+            let answer = await SmartHomeModel.shared.work(id, command)
+            thinking = false
+
             lines.append(ChatLine(speaker: .jarvis, text: answer))
             if speakAnswers || spoken { voice.say(answer) }
             return

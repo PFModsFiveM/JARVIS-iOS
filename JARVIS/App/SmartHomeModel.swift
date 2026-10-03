@@ -99,9 +99,17 @@ struct SmartDevice: Identifiable, Equatable {
 /// `devices.changed`. So there is nothing here to keep in step with the PC: it shows what the PC last
 /// said, and the PC says whenever anything changes.
 ///
-/// **Honest while the PC is away.** The command goes phone → PC → SwitchBot, so with the PC off or
-/// unreachable nothing can be switched from here, and the screen says that rather than showing a
-/// switch that silently does nothing. Waking the PC is the way back, and it is on the same page.
+/// **When the PC is away.** The command normally goes phone → PC → SwitchBot, and that stays the
+/// first choice whenever the PC is answering: the PC owns the state, confirms the switch and tells
+/// every other phone what changed. A PC that is off, though, is not a hop - so when the bridge is
+/// not answering and this phone has both its own SwitchBot token and a binding the PC taught it,
+/// the command goes straight to the vendor instead. `StandbyRoute` makes that decision, once, for
+/// every screen.
+///
+/// What it will not do is pretend. Without a token or a binding the screen says so and offers the
+/// wake button instead of a switch that fails; a command the vendor accepted says "sent" until a
+/// status read confirms it; and with the PC off the state of a light nobody has read is shown as
+/// unknown rather than as whatever it was when the PC last spoke.
 @MainActor
 final class SmartHomeModel: ObservableObject {
     static let shared = SmartHomeModel()
@@ -112,10 +120,68 @@ final class SmartHomeModel: ObservableObject {
     /// The last thing that went wrong, in JARVIS's words, per device. Cleared by the next command.
     @Published private(set) var messages: [String: String] = [:]
 
+    /// What this phone can work by itself, as the PC last described it. Empty until it has.
+    @Published private(set) var standby: [StandbyDevice] = StandbyBindings.load()
+
+    /// The SwitchBot token this phone holds, if the owner has given it one.
+    @Published private(set) var credentials: SwitchBotCredentials? = SwitchBotCredentials.load()
+
     private let model: AppModel
+
+    /// Pinned by the tests; the live one talks to SwitchBot.
+    var wiring: SwitchBotStandby.Wiring = .live
 
     init(model: AppModel = .shared) {
         self.model = model
+    }
+
+    /// The owner's own SwitchBot token, kept in the Keychain and nowhere else.
+    func remember(token: String, secret: String) {
+        let pair = SwitchBotCredentials(
+            token: token.trimmingCharacters(in: .whitespacesAndNewlines),
+            secret: secret.trimmingCharacters(in: .whitespacesAndNewlines))
+
+        guard pair.usable else { return }
+
+        pair.save()
+        credentials = pair
+    }
+
+    /// Forgets it. The PC's own copy is untouched; this only stops the phone acting alone.
+    func forgetCredentials() {
+        SwitchBotCredentials.forget()
+        credentials = nil
+    }
+
+    /// Whether this device can be worked at all right now, by either route.
+    ///
+    /// What the panel enables its switch on. Previously it enabled on "the PC is answering", which
+    /// was the whole of the truth then and is not now.
+    func canWork(_ device: SmartDevice) -> Bool {
+        route(device.id, device.canSwitch ? .on : .press).possible
+    }
+
+    /// The route one command would take. Exposed so a screen can explain itself.
+    func route(_ id: String, _ command: StandbyCommand) -> StandbyRoute {
+        StandbyRoute.of(id,
+                        pcIsAnswering: model.link.isOnline,
+                        command: command,
+                        credentials: credentials,
+                        bindings: standby)
+    }
+
+    /// Whether anything at all can be switched from this phone right now, and why not when nothing can.
+    ///
+    /// One sentence for the screens, so the panel and the chat say the same thing.
+    var standbySummary: String? {
+        if model.link.isOnline { return nil }
+        if credentials == nil {
+            return "Your PC isn't answering. Add this phone's own SwitchBot token in Settings and it can still switch the light."
+        }
+        if standby.isEmpty {
+            return "Your PC isn't answering, and it hasn't told this phone how to reach anything yet. Connect once while it's on."
+        }
+        return "Your PC isn't answering, so these are going straight to SwitchBot."
     }
 
     /// One room's devices.
@@ -125,9 +191,23 @@ final class SmartHomeModel: ObservableObject {
         var id: String { room }
     }
 
+    /// What to draw.
+    ///
+    /// The PC's list whenever there is one. With the PC off since launch there is not, and a panel
+    /// with nothing in it would be the old behaviour dressed up - so the standby bindings stand in,
+    /// with every state shown as unknown. Unknown is the truth: nothing has read the switch.
+    var shown: [SmartDevice] {
+        guard devices.isEmpty else { return devices }
+
+        return standby.compactMap {
+            standbyRow($0, status: "unknown", certainty: "unknown",
+                       statusText: "Not known while your PC is off", battery: nil, problem: nil)
+        }
+    }
+
     /// The devices grouped by room, rooms in order, a device with no room last.
     var rooms: [Room] {
-        Dictionary(grouping: devices, by: { $0.room ?? "Elsewhere" })
+        Dictionary(grouping: shown, by: { $0.room ?? "Elsewhere" })
             .map { Room(room: $0.key, devices: $0.value.sorted { $0.name < $1.name }) }
             .sorted { lhs, rhs in
                 if lhs.room == "Elsewhere" { return false }
@@ -146,6 +226,22 @@ final class SmartHomeModel: ObservableObject {
         else { return }
 
         apply(list: reply.body["devices"] as? [[String: Any]] ?? [], simulating: reply.body["simulating"] as? Bool ?? false)
+
+        await learnStandby(client)
+    }
+
+    /// Asks the PC what this phone could work without it, and remembers the answer.
+    ///
+    /// Asked while the PC is up, because it cannot be asked when it is down - which is the whole
+    /// point. Quietly: a PC that predates this request answers "failed", and what the phone already
+    /// learned stays as it was rather than being wiped by an older PC.
+    func learnStandby(_ client: BridgeClient) async {
+        guard let reply = try? await client.request("devices.standby"), reply.kind == "devices.standby" else { return }
+
+        let learned = (reply.body["devices"] as? [[String: Any]] ?? []).compactMap(StandbyDevice.init)
+
+        standby = learned
+        StandbyBindings.save(learned)
     }
 
     /// Reads one device now. The PC decides whether that costs a request to the vendor.
@@ -170,10 +266,57 @@ final class SmartHomeModel: ObservableObject {
         await command(device, kind: "devices.press", body: ["id": device.id])
     }
 
+    /// Works a device named by JARVIS's id, and says in one sentence what happened.
+    ///
+    /// For the spoken and typed paths, which name a device rather than tapping a row, and which may
+    /// be running with the PC off and no device list to tap. Goes through exactly the same routing
+    /// and the same wording as the panel's switch, so the two cannot drift.
+    func work(_ id: String, _ command want: StandbyCommand) async -> String {
+        guard let device = shown.first(where: { $0.id == id }) else {
+            return "I don't know a device by that name."
+        }
+
+        switch want {
+        case .on: await setPower(device, on: true)
+        case .off: await setPower(device, on: false)
+        case .press: await press(device)
+        }
+
+        if let said = messages[id] { return said }
+
+        // Nothing went wrong and nothing needed explaining, which is the PC path confirming it.
+        let after = shown.first(where: { $0.id == id })
+
+        switch want {
+        case .on: return after?.isOn == true ? "\(device.name) is on." : "\(device.name): \(after?.statusText ?? "sent")."
+        case .off: return after?.isOff == true ? "\(device.name) is off." : "\(device.name): \(after?.statusText ?? "sent")."
+        case .press: return "Pressed \(device.name)."
+        }
+    }
+
     private func command(_ device: SmartDevice, kind: String, body: [String: Any]) async {
         messages[device.id] = nil
         replace(device.pending())
 
+        let wanted: StandbyCommand = kind == "devices.press" ? .press : (body["on"] as? Bool == true ? .on : .off)
+
+        switch StandbyRoute.of(device.id,
+                               pcIsAnswering: model.link.isOnline,
+                               command: wanted,
+                               credentials: credentials,
+                               bindings: standby) {
+        case .pc:
+            await throughThePC(device, kind: kind, body: body, wanted: wanted)
+        case .direct(let binding):
+            await straightToTheVendor(device, binding: binding, wanted: wanted)
+        case .nothing(let why):
+            messages[device.id] = why
+            replace(device)
+        }
+    }
+
+    /// The normal path, and the preferred one: the PC decides, carries it out and confirms.
+    private func throughThePC(_ device: SmartDevice, kind: String, body: [String: Any], wanted: StandbyCommand) async {
         do {
             let client = try await model.session()
             let reply = try await client.request(kind, body, timeout: 25)
@@ -187,10 +330,105 @@ final class SmartHomeModel: ObservableObject {
                 replace(device)
             }
         } catch {
-            // The PC did not answer at all, which is not the light's fault and is said as such.
-            messages[device.id] = "Couldn't reach your PC, so \(device.name) wasn't switched."
-            replace(device)
+            // The PC stopped answering between the route decision and the request. Rather than
+            // reporting a failure that is not the light's fault, take the other route if there is
+            // one - which is exactly the case this feature was built for.
+            switch StandbyRoute.of(device.id, pcIsAnswering: false, command: wanted,
+                                   credentials: credentials, bindings: standby) {
+            case .direct(let binding):
+                await straightToTheVendor(device, binding: binding, wanted: wanted)
+            case .pc, .nothing:
+                messages[device.id] = "Couldn't reach your PC, so \(device.name) wasn't switched."
+                replace(device)
+            }
         }
+    }
+
+    /// The PC-off path: this phone's own token, straight to SwitchBot, and then read back.
+    ///
+    /// Two steps on purpose. SwitchBot accepting a command means the cloud has it, not that the
+    /// rocker moved, so the state is shown as updating and the sentence says "sent" until a status
+    /// read comes back. A read that says nothing - which is what a Bot on a push button reports -
+    /// leaves it at "sent", because that is the whole truth.
+    private func straightToTheVendor(_ device: SmartDevice, binding: StandbyDevice, wanted: StandbyCommand) async {
+        guard let credentials else {
+            messages[device.id] = "This phone has no SwitchBot token of its own."
+            replace(device)
+            return
+        }
+
+        let vendor = SwitchBotStandby(credentials: credentials, wiring: wiring)
+        let outcome = await vendor.send(wanted, to: binding.vendorDeviceId)
+
+        guard outcome.reached else {
+            messages[device.id] = outcome.sentence
+            show(unknown(binding, because: outcome.sentence), orKeep: device)
+            return
+        }
+
+        // Accepted. Nothing is claimed about the switch until the read-back says so.
+        messages[device.id] = outcome.sentence
+        show(unknown(binding, because: outcome.sentence), orKeep: device)
+
+        let (confirmation, battery) = await vendor.read(binding.vendorDeviceId)
+
+        messages[device.id] = confirmation.sentence
+
+        if case .confirmed(let on) = confirmation {
+            show(standbyRow(binding, status: on ? "on" : "off", certainty: "confirmed",
+                            statusText: on ? "On (confirmed without the PC)" : "Off (confirmed without the PC)",
+                            battery: battery, problem: nil),
+                 orKeep: device)
+        } else {
+            show(unknown(binding, because: confirmation.sentence), orKeep: device)
+        }
+    }
+
+    /// The device with its state honestly unknown, and why.
+    private func unknown(_ binding: StandbyDevice, because: String) -> SmartDevice? {
+        standbyRow(binding, status: "unknown", certainty: "unknown",
+                   statusText: "Not known while your PC is off", battery: nil, problem: because)
+    }
+
+    /// Shows a row built from a binding, or leaves the device as it was if one could not be built.
+    ///
+    /// `SmartDevice`'s decoder is the only one in the app, and it refuses a row with no id or name.
+    /// A binding always has both, so this never falls back in practice - but going through the same
+    /// decoder as the PC's own rows is worth more than the certainty of a force-unwrap.
+    private func show(_ built: SmartDevice?, orKeep fallback: SmartDevice) {
+        replace(built ?? fallback)
+    }
+
+    /// A device row built from a standby binding rather than from the PC.
+    ///
+    /// Through `SmartDevice`'s own decoder, so there is one shape and one set of rules about what
+    /// each field means, whoever supplied it. `simulated` is false and `bound` is true because both
+    /// are facts about the device, not about who is talking to it.
+    private func standbyRow(
+        _ binding: StandbyDevice,
+        status: String,
+        certainty: String,
+        statusText: String,
+        battery: Int?,
+        problem: String?
+    ) -> SmartDevice? {
+        var row: [String: Any] = [
+            "id": binding.id,
+            "name": binding.name,
+            "kind": binding.kind,
+            "status": status,
+            "statusText": statusText,
+            "certainty": certainty,
+            "updating": false,
+            "bound": true,
+            "simulated": false,
+            "capabilities": binding.switches ? ["powerOn", "powerOff", "press"] : ["press"]
+        ]
+        if let room = binding.room { row["room"] = room }
+        if let battery { row["battery"] = NSNumber(value: battery) }
+        if let problem { row["problem"] = problem }
+
+        return SmartDevice(row)
     }
 
     /// A `devices.changed` push: one device, as the PC now sees it.

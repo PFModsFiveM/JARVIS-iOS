@@ -77,6 +77,13 @@ struct PairedPC: Codable, Equatable {
         Keychain.delete(account)
         WakeProfile.forget()
         DeviceKeys.erase()
+
+        // What this phone was taught about the house goes with the pairing: a binding says which
+        // Bot is on which switch in a particular house, and it is not this phone's to keep once it
+        // is no longer that house's phone. The SwitchBot token goes too - it only exists to let
+        // this phone act for that PC, and the owner's account is untouched either way.
+        StandbyBindings.forget()
+        SwitchBotCredentials.forget()
     }
 }
 
