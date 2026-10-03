@@ -65,6 +65,19 @@ enum WakeStrategy: String, Codable {
     case localBroadcast
     /// To the home connection's public address, for the router to forward inwards.
     case remoteRouter
+
+    /// A SwitchBot Bot pressing the PC's own power button, through SwitchBot's cloud.
+    ///
+    /// Not a magic packet at all, and the only one of the three that works from anywhere: a
+    /// broadcast cannot leave a phone on mobile data, and the router route needs a way in from
+    /// outside that most houses do not have. This goes phone to SwitchBot's cloud to the hub at
+    /// home to the Bot over Bluetooth, and the PC takes no part in it - which is the point, since
+    /// at that moment the PC is off.
+    ///
+    /// Last in the order on purpose. It is the slowest, it spends the account's daily quota, and
+    /// it physically presses a button; a packet that wakes a machine that was only asleep is
+    /// cheaper and gentler than that, so it is tried first whenever it can work.
+    case powerButton
 }
 
 /// Where the PC can be woken, and whether it may be.
@@ -236,11 +249,15 @@ actor WakeOnLanService {
     /// On Wi-Fi it is worth trying the broadcast first even on a network that is not home - it
     /// fails in milliseconds and costs nothing, where the remote route crosses the internet. On
     /// mobile data a local broadcast cannot work at all, so it is not attempted.
-    static func strategies(for profile: WakeProfile, cellular: Bool) -> [WakeStrategy] {
+    static func strategies(for profile: WakeProfile, cellular: Bool, powerButton: Bool = PcPowerBot.isSetUp) -> [WakeStrategy] {
         var order: [WakeStrategy] = []
 
         if !cellular && profile.usable { order.append(.localBroadcast) }
         if profile.reachableRemotely && (!cellular || profile.overCellular) { order.append(.remoteRouter) }
+
+        // Always last, and always available once the PC has handed the button over - it is the
+        // only one that does not need this phone to be able to reach the house's network.
+        if powerButton { order.append(.powerButton) }
 
         return order
     }
@@ -316,17 +333,37 @@ actor WakeOnLanService {
         guard !order.isEmpty else {
             return .failed(cellular ? .remoteRouter : .localBroadcast, "",
                            cellular
-                               ? "\(profile.deviceName) can only be woken from home until a way in from outside is set up."
+                               ? "\(profile.deviceName) can only be woken from home until a way in from outside is set up, or a Bot is put on its power button."
                                : "Waking \(profile.deviceName) is not set up yet.")
         }
 
         var last = WakeOutcome.failed(order[0], "", "")
         for strategy in order {
-            last = await wake(profile, using: strategy)
+            last = strategy == .powerButton ? await pressThePowerButton() : await wake(profile, using: strategy)
             if last.sent { return last }
         }
 
         return last
+    }
+
+    /// The last resort, and the only one that is not a packet.
+    ///
+    /// Kept here rather than in `wake(_:using:)` because that method is about magic packets -
+    /// addresses, ports and broadcast - and none of those words mean anything to a Bot on a
+    /// button. Same shape of answer, so the caller does not care which happened.
+    private func pressThePowerButton() async -> WakeOutcome {
+        guard let name = PcPowerBot.buttonName else {
+            return .failed(.powerButton, "", "No power button has been handed to this phone.")
+        }
+
+        do {
+            _ = try await PcPowerBot.press()
+
+            // because is empty when it worked, as every other outcome here is.
+            return WakeOutcome(sent: true, strategy: .powerButton, destination: name, packets: 1, because: "")
+        } catch {
+            return .failed(.powerButton, name, error.localizedDescription)
+        }
     }
 
     private static func explain(_ error: Error, _ profile: WakeProfile, _ strategy: WakeStrategy) -> String {

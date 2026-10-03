@@ -328,7 +328,14 @@ final class AppModel: ObservableObject {
             return
         }
 
-        note("wake: sent \(outcome.packets) packets \(outcome.strategy == .localBroadcast ? "to the home broadcast" : "through the router")\(outcome.resolved.map { " (resolved \($0))" } ?? "")")
+        switch outcome.strategy {
+        case .powerButton:
+            // Not packets at all: a Bot moved. Saying "sent 1 packets through the router" about a
+            // physical button press would be a note that misleads whoever reads it next.
+            note("wake: pressed \(outcome.destination)")
+        case .localBroadcast, .remoteRouter:
+            note("wake: sent \(outcome.packets) packets \(outcome.strategy == .localBroadcast ? "to the home broadcast" : "through the router")\(outcome.resolved.map { " (resolved \($0))" } ?? "")")
+        }
         wakeState = .waking(sent: outcome.destination, seconds: 0)
 
         // Try the bridge repeatedly rather than once at the end: the PC may be up in five seconds,
