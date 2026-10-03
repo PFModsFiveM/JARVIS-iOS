@@ -84,6 +84,13 @@ struct PairedPC: Codable, Equatable {
         // this phone act for that PC, and the owner's account is untouched either way.
         StandbyBindings.forget()
         SwitchBotCredentials.forget()
+
+        // And the shared store: where it is, the key that opens it, and this phone's own bucket
+        // credential. The key especially - it is the one thing that makes the PC's footage
+        // readable, and a phone that is no longer this JARVIS's phone has no business holding it.
+        StoreCoordinates.forget()
+        CloudVault.forget()
+        StoreCredentials.forget()
     }
 }
 
