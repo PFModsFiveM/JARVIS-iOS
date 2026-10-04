@@ -9,7 +9,10 @@ name: JARVIS
 options:
   bundleIdPrefix: uk.jarvis
   deploymentTarget:
-    iOS: "18.0"
+    # 26 rather than 18: Apple's on-device Foundation Models need it, and they are what lets
+    # JARVIS think on the phone with the PC off. The cost is that the app no longer installs on
+    # iOS 18-25, which for a personal app paired to one PC is no cost at all.
+    iOS: "26.0"
   createIntermediateGroups: true
   groupSortPosition: top
 settings:
@@ -18,7 +21,7 @@ settings:
     TARGETED_DEVICE_FAMILY: "1,2"        # iPhone and iPad
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: ""                 # left empty on purpose: choose your team in Xcode once
-    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: minimal    # this code is written for Swift 5 concurrency checking
 targets:
