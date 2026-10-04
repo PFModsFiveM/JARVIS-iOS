@@ -76,6 +76,11 @@ struct ScreenView: View {
                         model.toast = "Saved to Photos."
                     }
                     .buttonStyle(HUDButtonStyle())
+
+                    // Explicit, for the same reason the recording player has one: a sheet whose
+                    // only exit is a swipe is a sheet somebody gets stuck in.
+                    Button("Close") { model.cameraPhoto = nil }
+                        .buttonStyle(HUDButtonStyle())
                 }
             }
             .padding(16)

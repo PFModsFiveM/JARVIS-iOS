@@ -200,10 +200,30 @@ struct RecordingsView: View {
     /// Hidden incidents are collapsed, not gone. Off each time the screen opens.
     @State private var showHidden = false
 
+    /// This screen is presented as a sheet from Security, so it needs its own way out. A
+    /// ScrollView in a sheet is swipe-dismissable, but "swipe from the right place" is not an
+    /// affordance somebody finds while annoyed, and it was the first half of the trap.
+    @Environment(\.dismiss) private var dismiss
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                HUDLabel(text: "What the camera kept", color: HUD.accent).padding(.top, 8)
+                HStack {
+                    HUDLabel(text: "What the camera kept", color: HUD.accent)
+
+                    Spacer(minLength: 8)
+
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(HUD.dim)
+                            .frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("Close recordings")
+                }
+                .padding(.top, 8)
 
                 if let trouble = recordings.trouble {
                     HUDFrame(title: "Trouble", tint: HUD.alert) {
@@ -266,12 +286,13 @@ struct RecordingsView: View {
         .background(HUD.background.ignoresSafeArea())
         .task { await recordings.load() }
         .refreshable { await recordings.load() }
-        .sheet(item: Binding(
-            get: { recordings.playing.map(Playing.init) },
-            set: { if $0 == nil { recordings.playing = nil } })) { item in
-            VideoPlayer(player: AVPlayer(url: item.url))
-                .ignoresSafeArea()
-        }
+        // One player for both lists, with a Close button that is always reachable. This was a
+        // sheet on a sheet containing a full-bleed VideoPlayer: AVPlayerViewController ate the
+        // drag gesture, ignoresSafeArea covered the top edge, and there was no way back short of
+        // closing the app.
+        .recordingPlayer(Binding(
+            get: { recordings.playing.map { RecordingPlayable(url: $0, title: "Recording") } },
+            set: { if $0 == nil { recordings.playing = nil } }))
     }
 
     /// One incident: what it was, what there is to watch, and a way to put it away.
@@ -312,10 +333,6 @@ struct RecordingsView: View {
         }
     }
 
-    private struct Playing: Identifiable {
-        let url: URL
-        var id: String { url.path }
-    }
 }
 
 /// What the shared store holds, which is what can be watched with the PC off.
@@ -332,12 +349,6 @@ struct StoredFootageSection: View {
     @State private var said: String?
     @State private var fetching: String?
     @State private var playing: URL?
-
-    /// Its own, because RecordingsView's is private to it.
-    private struct Watching: Identifiable {
-        let url: URL
-        var id: String { url.path }
-    }
 
     var body: some View {
         HUDFrame(title: "Without your PC") {
@@ -400,11 +411,10 @@ struct StoredFootageSection: View {
                 .padding(.vertical, 6)
             }
         }
-        .sheet(item: Binding(
-            get: { playing.map(Watching.init) },
-            set: { if $0 == nil { playing = nil } })) { item in
-            VideoPlayer(player: AVPlayer(url: item.url))
-                .ignoresSafeArea()
-        }
+        // The same player as the PC-provided list above, for the same reason: two near-identical
+        // player screens is how one of them ends up with the exit and the other does not.
+        .recordingPlayer(Binding(
+            get: { playing.map { RecordingPlayable(url: $0, title: "Recording") } },
+            set: { if $0 == nil { playing = nil } }))
     }
 }
