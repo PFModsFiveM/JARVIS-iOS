@@ -26,6 +26,7 @@ enum SettingsDestination: String, CaseIterable, Hashable, Codable {
     case alerts = "alerts"
 
     // MOBILE JARVIS - what this phone is on its own, not what it can ask the PC for
+    case mobileCapabilities = "mobile"
     case standbyLights = "standby-lights"
     case whereabouts = "whereabouts"
 
@@ -136,6 +137,13 @@ enum SettingsCatalogue {
                       keywords: ["ntfy", "notifications", "push", "alerts", "topic", "background"]),
 
         // MARK: Mobile JARVIS
+        SettingsEntry(destination: .mobileCapabilities,
+                      title: "What this phone can do",
+                      subtitle: "Which requests it answers itself, and which are your PC's.",
+                      symbol: "iphone.radiowaves.left.and.right",
+                      category: .mobile,
+                      keywords: ["capabilities", "offline", "pc off", "standalone", "node", "routing",
+                                 "what can you do", "without the pc", "on its own"]),
         SettingsEntry(destination: .standbyLights,
                       title: "Switching lights without the PC",
                       subtitle: "This phone's own SwitchBot token.",

@@ -16,6 +16,7 @@ struct SettingsPage: View {
             case .voice: VoicePage()
             case .siri: SiriPage()
             case .alerts: AlertsPage()
+            case .mobileCapabilities: MobileCapabilitiesPage()
             case .standbyLights: StandbyLightsPage()
             case .whereabouts: WhereaboutsPage()
             case .waking: WakingPage()
@@ -179,6 +180,98 @@ private struct AlertsPage: View {
 }
 
 // MARK: - Mobile JARVIS
+
+/// What this node can do, and what belongs to the other one.
+///
+/// Both halves on one page on purpose. "What can you do with my PC off?" is answered by the first
+/// list; the second is why the phone can say "that one is your PC's, and it isn't answering"
+/// instead of showing a transport error. A node that knows what the other nodes do is the whole
+/// idea, and this is where it is visible.
+private struct MobileCapabilitiesPage: View {
+    @EnvironmentObject var model: AppModel
+    @ObservedObject private var home = SmartHomeModel.shared
+    @ObservedObject private var footage = FootageModel.shared
+
+    private var state: MobileCapabilities.NodeState { model.nodeState }
+
+    var body: some View {
+        List {
+            Section {
+                StatusRow(title: "On its own", status: .ready("\(MobileCapabilities.standalone(state).count) of \(thisPhone.count)"))
+                StatusRow(title: state.pcName, status: state.pcAnswering ? .live("Answering") : .configured("Not answering"))
+            } header: {
+                HUDSectionTitle(text: "Now")
+            } footer: {
+                SettingsNote("Mobile JARVIS is a node of the same JARVIS, not a remote control for it. With your PC off it still does what a phone is the right machine for, and says plainly when a request belongs to the PC.")
+            }
+
+            Section {
+                ForEach(thisPhone) { CapabilityRow(card: $0) }
+            } header: {
+                HUDSectionTitle(text: "This phone does these")
+            }
+
+            Section {
+                ForEach(pcPrime) { CapabilityRow(card: $0) }
+            } header: {
+                HUDSectionTitle(text: "PC-Prime does these")
+            } footer: {
+                SettingsNote("Understanding, memory, research and the screen are the PC's, and that is deliberate: it is where JARVIS lives, where the tools are, and where the state of record is kept. A phone that answered these in its own words would be a worse JARVIS wearing the same name.")
+            }
+        }
+        .hudList()
+    }
+
+    private var thisPhone: [MobileCapabilityCard] {
+        MobileCapabilities.cards(state).filter { $0.node == .thisPhone }
+    }
+
+    private var pcPrime: [MobileCapabilityCard] {
+        MobileCapabilities.cards(state).filter { $0.node == .pcPrime }
+    }
+}
+
+private struct CapabilityRow: View {
+    let card: MobileCapabilityCard
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 10) {
+                Image(systemName: card.symbol)
+                    .font(.system(size: 15))
+                    .foregroundStyle(status.colour)
+                    .frame(width: 24)
+                Text(card.title).foregroundStyle(HUD.text)
+                Spacer(minLength: 8)
+                StatusDot(status: status)
+            }
+            Text(card.detail)
+                .font(.caption)
+                .foregroundStyle(HUD.dim)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // Only when there is something to do about it. A row that says "ready" twice is noise.
+            if case .needs(let what) = card.readiness {
+                Text(what)
+                    .font(.caption)
+                    .foregroundStyle(HUD.amber)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 2)
+        .hudRow()
+    }
+
+    /// The readiness as the list's own status vocabulary, so one dot means one thing everywhere.
+    private var status: SettingsStatus {
+        switch card.readiness {
+        case .standalone: return .live("Works with the PC off")
+        case .throughThePC: return .ready("Through the PC")
+        case .needs: return .attention("Needs setting up")
+        case .waitingForThePC: return .configured("The PC isn't answering")
+        }
+    }
+}
 
 private struct StandbyLightsPage: View {
     var body: some View {

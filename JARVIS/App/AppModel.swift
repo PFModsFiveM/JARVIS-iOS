@@ -962,13 +962,24 @@ final class AppModel: ObservableObject {
 
         lines.append(ChatLine(speaker: .you, text: request))
 
-        // The few requests this phone must answer itself, because the PC cannot: "wake my PC" sent
-        // to a sleeping PC is a request with nowhere to go. One reading of the sentence, used by the
-        // typed box, the wake word and Siri alike - so the button and the words are the same action.
-        // Read once, against what this phone was actually taught it can reach. Only consulted while
-        // the PC is not answering: with the PC up, every one of these goes to the PC, which
-        // understands the sentence better than any word list here and owns the device state.
-        let local = link.isOnline ? nil : LocalCapability.of(request, devices: SmartHomeModel.shared.standby)
+        // Which node this belongs to. One decision, in `MobileCapabilities.route`, used by the
+        // typed box, the wake word and Siri alike - so the button and the words are the same
+        // action. A PC that is answering gets everything, including the few requests this phone
+        // could handle itself: it understands the sentence better than any reading here and owns
+        // the device state.
+        let route = MobileCapabilities.route(request, devices: SmartHomeModel.shared.standby, state: nodeState)
+
+        // A request that is PC-Prime's, with PC-Prime off, used to be sent anyway and come back as
+        // a transport error. JARVIS does not answer "Connection refused": it says which machine
+        // does that, that the machine is not answering, and what it can offer instead.
+        if case .waitingForThePC(let because) = route {
+            lines.append(ChatLine(speaker: .jarvis, text: because))
+            if speakAnswers || spoken { voice.say(because) }
+            return
+        }
+
+        var local: LocalCapability?
+        if case .thisPhone(let capability) = route { local = capability }
 
         if case .wake = local {
             lines.append(ChatLine(speaker: .jarvis, text: wakeAnswer()))
@@ -1025,6 +1036,24 @@ final class AppModel: ObservableObject {
         } catch {
             lines.append(ChatLine(speaker: .system, text: error.localizedDescription))
         }
+    }
+
+    /// This phone as a node: what it can do at this moment, as plain values.
+    ///
+    /// Read from the live models here and nowhere else, so `MobileCapabilities` stays a function of
+    /// its argument and can be tested without an app, a PC or a network.
+    var nodeState: MobileCapabilities.NodeState {
+        MobileCapabilities.NodeState(
+            pcName: wakeProfile.deviceName.isEmpty ? pcName : wakeProfile.deviceName,
+            pcAnswering: link.isOnline,
+            servicePaired: MachineLink.shared.isPaired,
+            wakeEnabled: wakeProfile.enabled,
+            wakeReachable: !WakeOnLanService.strategies(for: wakeProfile, cellular: network.cellular).isEmpty,
+            hasOwnDeviceToken: SmartHomeModel.shared.credentials != nil,
+            reachableDevices: SmartHomeModel.shared.standby.count,
+            footageJoined: FootageModel.shared.credentials != nil,
+            locationReporting: whereabouts.reporting,
+            alertsOn: alertsTopic != nil)
     }
 
     /// What to say when asked what the PC is doing and JARVIS is not there to be asked.
