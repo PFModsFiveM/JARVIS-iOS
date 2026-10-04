@@ -129,6 +129,12 @@ struct RootView: View {
                     }
                 }
             }
+        case "settings":
+            // §22. jarvis://settings opens the list; jarvis://settings/<slug> opens one page. The
+            // slug is `SettingsDestination`'s raw value, so the catalogue is the only place the set
+            // of valid links is written down.
+            tab = "settings"
+            model.settingsRoute = SettingsCatalogue.destination(forPath: url.path)
         case "talk":
             tab = "jarvis"
             Task {

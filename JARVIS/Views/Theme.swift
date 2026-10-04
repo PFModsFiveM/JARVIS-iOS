@@ -130,6 +130,11 @@ struct HUDButtonStyle: ButtonStyle {
 ///
 /// Drawn once per screen with Canvas, and still - the grid is texture, not motion, and costs nothing
 /// after the first frame.
+///
+/// **Never a touch target.** Decoration that can be hit-tested competes for the gesture with the
+/// thing it sits behind, and a `Canvas` is hit-testable by default like any other view. The grid has
+/// nothing to respond to, so it declines input outright rather than relying on being underneath
+/// something else - twelve screens put this behind a scroller and none of them want it in the way.
 struct HUDBackdrop: View {
     var body: some View {
         ZStack {
@@ -150,6 +155,7 @@ struct HUDBackdrop: View {
             // Darker at the bottom, where the input bar and the tab bar sit.
             LinearGradient(colors: [.clear, HUD.background.opacity(0.85)], startPoint: .center, endPoint: .bottom)
         }
+        .allowsHitTesting(false)
     }
 }
 

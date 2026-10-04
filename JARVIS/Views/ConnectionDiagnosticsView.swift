@@ -1,5 +1,6 @@
 import Network
 import SwiftUI
+import UIKit
 
 /// Why the connection is or is not up, in the order a person would ask it.
 ///
@@ -17,9 +18,15 @@ struct ConnectionDiagnosticsView: View {
     /// whatever it was when this sheet opened.
     @ObservedObject private var browser = AppModel.shared.browser
 
+    /// True when this is a page inside Settings' own navigation stack rather than a sheet of its
+    /// own. A pushed view that brings its own `NavigationStack` loses the back button and the title.
+    var embedded = false
+
     var body: some View {
-        NavigationStack {
+        if embedded {
             content
+        } else {
+            NavigationStack { content }
         }
     }
 
@@ -84,8 +91,8 @@ struct ConnectionDiagnosticsView: View {
                             Text(line).font(.system(size: 11, design: .monospaced)).foregroundStyle(HUD.text)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
+                        CopyLines(what: "The wake attempt", lines: last.evidence)
                     }
-                    .textSelection(.enabled)
                 }
 
                 HUDFrame(title: "The PC's wake setup") {
@@ -150,8 +157,10 @@ struct ConnectionDiagnosticsView: View {
                     ForEach(Array(model.connectionLog.enumerated()), id: \.offset) { _, line in
                         Text(line).font(.system(size: 11, design: .monospaced)).foregroundStyle(HUD.dim)
                     }
+                    if !model.connectionLog.isEmpty {
+                        CopyLines(what: "The log", lines: model.connectionLog)
+                    }
                 }
-                .textSelection(.enabled)
             }
             .padding(20)
         }
@@ -206,5 +215,30 @@ struct ConnectionDiagnosticsView: View {
             Text(value).font(.system(size: 12, design: .monospaced)).foregroundStyle(HUD.text)
                 .multilineTextAlignment(.trailing).textSelection(.enabled)
         }
+    }
+}
+
+/// Copies a block of machine-written lines.
+///
+/// Why a button and not `.textSelection(.enabled)` on the block: selectable text installs a UIKit
+/// text interaction that claims a drag beginning inside it, so a tall selectable block inside a
+/// `ScrollView` stops the screen scrolling. That is exactly what had happened to Settings, and it
+/// had happened twice here. Selection stays on single values - an address, a fingerprint - where it
+/// is one line high and cannot swallow the page.
+private struct CopyLines: View {
+    let what: String
+    let lines: [String]
+
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        Button {
+            UIPasteboard.general.string = lines.joined(separator: "\n")
+            model.toast = "\(what) copied."
+        } label: {
+            Label("Copy", systemImage: "doc.on.doc").font(.footnote)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(HUD.accent)
     }
 }

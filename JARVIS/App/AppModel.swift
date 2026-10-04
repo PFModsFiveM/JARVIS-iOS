@@ -91,6 +91,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var speaking = false
     /// A jarvis:// link from Siri or Shortcuts for the root view to act on once the app is on screen.
     @Published var pendingLink: URL?
+    /// The Settings page a `jarvis://settings/<slug>` link asked for. Set by the URL handler, read
+    /// and cleared by `SettingsView`, so a link that arrives while another tab is open still lands
+    /// on the right page once Settings comes forward.
+    @Published var settingsRoute: SettingsDestination?
     @Published private(set) var awaitingVoice = false
 
     /// Live view: the PC's displays, the one being watched, and its latest frame.
