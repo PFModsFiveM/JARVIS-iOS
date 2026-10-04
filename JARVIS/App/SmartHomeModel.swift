@@ -301,6 +301,23 @@ final class SmartHomeModel: ObservableObject {
         }
     }
 
+    /// Works a device the other way from however it is now - "switch the bedroom light".
+    ///
+    /// Only when the state is actually known. A toggle against an unknown state is a coin toss
+    /// dressed as a command, and the one place this is most likely to be asked is with the PC off,
+    /// where a light nobody has read is exactly that. So it says what it does not know and offers
+    /// the two commands that need no knowledge, rather than guessing and being right half the time.
+    func toggle(_ id: String) async -> String {
+        guard let device = shown.first(where: { $0.id == id }) else {
+            return MobilePhrases.noSuchDevice()
+        }
+
+        if device.isOn { return await work(id, .off) }
+        if device.isOff { return await work(id, .on) }
+
+        return MobilePhrases.cannotToggleUnknown(device.name)
+    }
+
     private func command(_ device: SmartDevice, kind: String, body: [String: Any]) async {
         messages[device.id] = nil
         replace(device.pending())
@@ -364,31 +381,21 @@ final class SmartHomeModel: ObservableObject {
             return
         }
 
-        let vendor = SwitchBotStandby(credentials: credentials, wiring: wiring)
-        let outcome = await vendor.send(wanted, to: binding.vendorDeviceId)
+        // The send and the read-back are `StandbyExecutor`'s, so Siri, the widget and this screen
+        // cannot drift on what "sent" means.
+        let done = await StandbyExecutor.perform(wanted, on: binding, credentials: credentials, wiring: wiring)
 
-        guard outcome.reached else {
-            messages[device.id] = outcome.sentence
-            show(unknown(binding, because: outcome.sentence), orKeep: device)
+        messages[device.id] = done.sentence
+
+        guard let on = done.confirmed else {
+            show(unknown(binding, because: done.sentence), orKeep: device)
             return
         }
 
-        // Accepted. Nothing is claimed about the switch until the read-back says so.
-        messages[device.id] = outcome.sentence
-        show(unknown(binding, because: outcome.sentence), orKeep: device)
-
-        let (confirmation, battery) = await vendor.read(binding.vendorDeviceId)
-
-        messages[device.id] = confirmation.sentence
-
-        if case .confirmed(let on) = confirmation {
-            show(standbyRow(binding, status: on ? "on" : "off", certainty: "confirmed",
-                            statusText: on ? "On (confirmed without the PC)" : "Off (confirmed without the PC)",
-                            battery: battery, problem: nil),
-                 orKeep: device)
-        } else {
-            show(unknown(binding, because: confirmation.sentence), orKeep: device)
-        }
+        show(standbyRow(binding, status: on ? "on" : "off", certainty: "confirmed",
+                        statusText: on ? "On (confirmed without the PC)" : "Off (confirmed without the PC)",
+                        battery: done.battery, problem: nil),
+             orKeep: device)
     }
 
     /// The device with its state honestly unknown, and why.

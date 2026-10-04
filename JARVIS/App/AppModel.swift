@@ -916,6 +916,16 @@ final class AppModel: ObservableObject {
         // which is exactly what should happen: the app keeps whatever it already had.
         if let reply = try? await client.request("network"), reply.kind == "network" { learnNetwork(reply.body) }
 
+        // What this phone may work by itself while the PC is off.
+        //
+        // Here, on every connection, rather than when a screen that shows devices happens to open -
+        // which is where it used to be, and the reason standalone control was unreliable rather
+        // than broken. An owner who paired, used the voice path and never opened the smart-home
+        // screen had an empty binding table, so with the PC off there was nothing to match a light
+        // against and JARVIS said the PC was not answering. The bindings are what makes the phone
+        // independent; they cannot be learned as a side effect of navigation.
+        await SmartHomeModel.shared.learnStandby(client)
+
         // Anything the phone recorded while the PC was off. Sent oldest first, and it stops at the
         // first one that will not go rather than skipping it, so the PC's trail stays in order.
         await whereabouts.flush()
@@ -987,70 +997,102 @@ final class AppModel: ObservableObject {
 
         lines.append(ChatLine(speaker: .you, text: request))
 
-        // Which node this belongs to. One decision, in `MobileCapabilities.route`, used by the
+        // Which node this belongs to. One decision, in `MobileCapabilities.decide`, used by the
         // typed box, the wake word and Siri alike - so the button and the words are the same
-        // action. A PC that is answering gets everything, including the few requests this phone
-        // could handle itself: it understands the sentence better than any reading here and owns
-        // the device state.
-        let route = MobileCapabilities.route(request, devices: SmartHomeModel.shared.standby, state: nodeState)
+        // action. A PC that is answering gets everything, including the requests this phone could
+        // handle itself: it understands the sentence better than any reading here and owns the
+        // device state. What this phone could have done becomes the fallback rather than being
+        // discarded, which is what makes a PC dropping mid-request survivable.
+        let decision = MobileCapabilities.decide(request, devices: SmartHomeModel.shared.standby, state: nodeState)
 
-        // A request that is PC-Prime's, with PC-Prime off, used to be sent anyway and come back as
-        // a transport error. JARVIS does not answer "Connection refused": it says which machine
-        // does that, that the machine is not answering, and what it can offer instead.
-        if case .waitingForThePC(let because) = route {
-            lines.append(ChatLine(speaker: .jarvis, text: because))
-            if speakAnswers || spoken { voice.say(because) }
-            return
+        if await follow(decision.lane, request: request, spoken: spoken) { return }
+
+        // The chosen lane did not work. This is almost always the PC: chosen because the bridge was
+        // up a moment ago, gone by the time the request left. Before this, that came back to the
+        // owner as a transport error for a light the phone could have switched itself.
+        if let fallback = decision.fallback, await follow(fallback, request: request, spoken: spoken) { return }
+
+        // Every lane failed, and the last one had the words for it.
+        let said = MobileCapabilities.waiting(nodeState)
+        lines.append(ChatLine(speaker: .jarvis, text: said))
+        if speakAnswers || spoken { voice.say(said) }
+    }
+
+    /// Carries one lane out. Returns false when that lane could not do it, so a fallback may try.
+    ///
+    /// False means *this node could not*, never *the request failed*: a light that SwitchBot refused
+    /// has been answered, honestly, and returns true. Only an unreachable node returns false, which
+    /// is the one case where trying somewhere else is the right thing rather than a second attempt
+    /// at the same thing.
+    private func follow(_ lane: MobileCapabilities.MobileLane, request: String, spoken: Bool) async -> Bool {
+        switch lane {
+        case .unavailable(let because):
+            answer(because, spoken: spoken)
+            return true
+
+        case .localMobile(let capability), .directDevice(let capability):
+            return await carryOut(capability, spoken: spoken)
+
+        case .cloud:
+            thinking = true
+            let said = await CloudIntelligence.shared.ask(request)
+            thinking = false
+            answer(said, spoken: spoken)
+            return true
+
+        case .pcPrime:
+            return await askThePC(request, spoken: spoken)
         }
+    }
 
-        var local: LocalCapability?
-        if case .thisPhone(let capability) = route { local = capability }
-
-        if case .wake = local {
+    /// One of the few requests this phone answers itself.
+    private func carryOut(_ capability: LocalCapability, spoken: Bool) async -> Bool {
+        switch capability {
+        case .wake:
             lines.append(ChatLine(speaker: .jarvis, text: wakeAnswer()))
             wakePC()
-            return
-        }
+            return true
 
-        // And the other thing a sleeping PC cannot be asked: what it is doing. The pre-login
-        // service can answer it when JARVIS cannot, and when JARVIS can, it goes to JARVIS - which
-        // knows everything the service does and a great deal more.
-        if case .state = local {
-            let answer = await machineAnswer()
-            lines.append(ChatLine(speaker: .jarvis, text: answer))
-            if speakAnswers || spoken { voice.say(answer) }
-            return
-        }
+        // The other thing a sleeping PC cannot be asked: what it is doing. The pre-login service
+        // can answer it when JARVIS cannot, and when JARVIS can, it goes to JARVIS - which knows
+        // everything the service does and a great deal more.
+        case .state:
+            answer(await machineAnswer(), spoken: spoken)
+            return true
 
         // How a device is doing for battery. Readable only by the device it is in, so this phone
         // answers it from what it read itself - and the answer carries its age by the same rule the
         // PC uses, because a percentage in the present tense is a claim about now.
-        if case .power(let target) = local {
+        case .power(let target):
             PowerReporter.shared.read()
             let matched = PowerReporter.matching(target, in: PowerReporter.shared.readings)
 
-            let answer = matched.isEmpty && target != nil
+            answer(matched.isEmpty && target != nil
                 ? MobilePhrases.nothingCalledWithABattery(target!)
-                : PowerReporter.sayAll(matched)
-
-            lines.append(ChatLine(speaker: .jarvis, text: answer))
-            if speakAnswers || spoken { voice.say(answer) }
-            return
-        }
+                : PowerReporter.sayAll(matched), spoken: spoken)
+            return true
 
         // A light the PC cannot relay a command to, because it is off. The same action the panel's
         // switch takes, with the same routing and the same wording - and the answer is whatever
         // actually happened, including "sent, and I can't confirm it from here".
-        if case .device(let id, let command) = local {
+        case .device(let id, let command):
             thinking = true
-            let answer = await SmartHomeModel.shared.work(id, command)
+            let said = await SmartHomeModel.shared.work(id, command)
             thinking = false
+            answer(said, spoken: spoken)
+            return true
 
-            lines.append(ChatLine(speaker: .jarvis, text: answer))
-            if speakAnswers || spoken { voice.say(answer) }
-            return
+        case .deviceToggle(let id):
+            thinking = true
+            let said = await SmartHomeModel.shared.toggle(id)
+            thinking = false
+            answer(said, spoken: spoken)
+            return true
         }
+    }
 
+    /// The PC's lane. False when the PC could not be reached at all, so a fallback may try.
+    private func askThePC(_ request: String, spoken: Bool) async -> Bool {
         thinking = true
         defer { thinking = false }
 
@@ -1060,23 +1102,30 @@ final class AppModel: ObservableObject {
 
         do {
             let reply = try await session().request("ask", ["text": request], timeout: 90)
-            let answer = reply.kind == "answer" ? (reply.text("text") ?? "") : reply.message
-            lines.append(ChatLine(speaker: reply.kind == "answer" ? .jarvis : .system, text: answer))
-            LiveActivity.shared.answer = answer
+            let said = reply.kind == "answer" ? (reply.text("text") ?? "") : reply.message
+            lines.append(ChatLine(speaker: reply.kind == "answer" ? .jarvis : .system, text: said))
+            LiveActivity.shared.answer = said
             // Whether to read it out is not this phone's decision alone. Its microphone hears the
             // same room the PC's does, so a wake word meant for the PC reaches both, and both
             // answering is the bug - with neither of them misbehaving on its own terms. The PC
             // arbitrates, and a phone that was not chosen still shows the whole conversation.
             if (speakAnswers || spoken) && mayReadAloud {
                 if usePCVoice, reply.kind == "answer", reply.body["voice"] as? Bool == true {
-                    expectVoice(for: reply.id, fallback: answer)
+                    expectVoice(for: reply.id, fallback: said)
                 } else {
-                    voice.say(answer)
+                    voice.say(said)
                 }
             }
+            return true
         } catch {
-            lines.append(ChatLine(speaker: .system, text: error.localizedDescription))
+            return false
         }
+    }
+
+    /// Says something, in the transcript and aloud when this turn should be heard.
+    private func answer(_ text: String, spoken: Bool) {
+        lines.append(ChatLine(speaker: .jarvis, text: text))
+        if speakAnswers || spoken { voice.say(text) }
     }
 
     /// This phone as a node: what it can do at this moment, as plain values.
@@ -1094,7 +1143,8 @@ final class AppModel: ObservableObject {
             reachableDevices: SmartHomeModel.shared.standby.count,
             footageJoined: FootageModel.shared.credentials != nil,
             locationReporting: whereabouts.reporting,
-            alertsOn: alertsTopic != nil)
+            alertsOn: alertsTopic != nil,
+            cloudReady: CloudIntelligence.shared.isConfigured)
     }
 
     /// What to say when asked what the PC is doing and JARVIS is not there to be asked.

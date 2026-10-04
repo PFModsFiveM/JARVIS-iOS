@@ -42,44 +42,98 @@ final class MobileCapabilityTests: XCTestCase {
 
     // MARK: Routing
 
-    /// Everything goes to the PC while the PC is answering, including the three requests this
-    /// phone could handle itself. It understands the sentence better and owns the device state.
+    /// Everything goes to the PC while the PC is answering, including the requests this phone could
+    /// handle itself. It understands the sentence better and owns the device state.
     func testAnAnsweringPCGetsEverything() {
         let up = state(pcAnswering: true, wakeEnabled: true, wakeReachable: true, token: true, devices: 1)
 
         for said in ["wake my pc", "is my pc on", "turn the bedroom light on", "what's the weather"] {
-            XCTAssertEqual(MobileCapabilities.route(said, devices: [light], state: up), .pcPrime,
+            XCTAssertEqual(MobileCapabilities.decide(said, devices: [light], state: up).lane, .pcPrime,
                            "\(said) should have gone to the PC")
         }
+    }
+
+    /// The fallback is what makes choosing the PC safe. A bridge that was up when the lane was
+    /// chosen and gone when the request left used to surface as a transport error.
+    func testChoosingThePCKeepsWhatThisPhoneCouldHaveDone() {
+        let up = state(pcAnswering: true, wakeEnabled: true, wakeReachable: true, token: true, devices: 1)
+
+        let light = MobileCapabilities.decide("turn the bedroom light on", devices: [self.light], state: up)
+        guard case .directDevice(.device(let id, let command)) = light.fallback else {
+            return XCTFail("a light should fall back to this phone's own route: \(String(describing: light.fallback))")
+        }
+        XCTAssertEqual(id, "bedroom_main_light")
+        XCTAssertEqual(command, .on)
+
+        guard case .localMobile(.power) = MobileCapabilities.decide("what's my phone battery", devices: [self.light], state: up).fallback else {
+            return XCTFail("a battery should fall back to this phone")
+        }
+    }
+
+    /// A general question has no second node while the PC is the only intelligence configured.
+    func testAGeneralQuestionHasNoFallbackWithoutACloudProvider() {
+        let up = state(pcAnswering: true)
+        XCTAssertNil(MobileCapabilities.decide("what's on my calendar", devices: [light], state: up).fallback)
     }
 
     func testWithThePCOffTheRequestsThisPhoneCanAnswerStayHere() {
         let off = state(wakeEnabled: true, wakeReachable: true, token: true, devices: 1)
 
-        guard case .thisPhone(.wake) = MobileCapabilities.route("wake my pc", devices: [light], state: off) else {
+        guard case .localMobile(.wake) = MobileCapabilities.decide("wake my pc", devices: [light], state: off).lane else {
             return XCTFail("waking should be this phone's")
         }
-        guard case .thisPhone(.state) = MobileCapabilities.route("is my pc on", devices: [light], state: off) else {
+        guard case .localMobile(.state) = MobileCapabilities.decide("is my pc on", devices: [light], state: off).lane else {
             return XCTFail("the machine's state should be this phone's")
         }
-        guard case .thisPhone(.device(let id, let command)) =
-                MobileCapabilities.route("turn the bedroom light on", devices: [light], state: off) else {
+        guard case .directDevice(.device(let id, let command)) =
+                MobileCapabilities.decide("turn the bedroom light on", devices: [light], state: off).lane else {
             return XCTFail("a light this phone can reach should be this phone's")
         }
         XCTAssertEqual(id, "bedroom_main_light")
         XCTAssertEqual(command, .on)
     }
 
+    /// With the PC off there is nowhere else to go, so the lane carries no fallback either.
+    func testTheDirectRouteIsTheLastRouteAndSaysSoByHavingNoFallback() {
+        let off = state(token: true, devices: 1)
+        XCTAssertNil(MobileCapabilities.decide("turn the bedroom light on", devices: [light], state: off).fallback)
+    }
+
     /// The case that was missing. Not an error, not a guess at the answer, and not silence.
     func testARequestForThePCWithThePCOffIsAnsweredRatherThanSent() {
-        guard case .waitingForThePC(let because) =
-                MobileCapabilities.route("what's on my calendar", devices: [light], state: state()) else {
+        guard case .unavailable(let because) =
+                MobileCapabilities.decide("what's on my calendar", devices: [light], state: state()).lane else {
             return XCTFail("should have been answered here rather than sent")
         }
 
         XCTAssertTrue(because.contains("DOM-PC"), "the answer should name the machine: \(because)")
         XCTAssertFalse(because.lowercased().contains("error"))
         XCTAssertFalse(because.lowercased().contains("refused"))
+    }
+
+    /// A general question with the PC off and a provider of this phone's own goes to the cloud -
+    /// and still has the honest sentence behind it if the cloud cannot be reached.
+    func testWithACloudProviderAGeneralQuestionStillHasSomewhereToGo() {
+        var withCloud = state()
+        withCloud.cloudReady = true
+
+        let decision = MobileCapabilities.decide("how long does concrete take to cure", devices: [light], state: withCloud)
+        XCTAssertEqual(decision.lane, .cloud)
+
+        guard case .unavailable = decision.fallback else {
+            return XCTFail("the cloud failing should still leave words rather than an error")
+        }
+    }
+
+    /// The cloud never takes a request this phone or the PC owns. A light is not a general question
+    /// however unreachable everything else is.
+    func testTheCloudNeverTakesADeviceCommand() {
+        var withCloud = state(token: true, devices: 1)
+        withCloud.cloudReady = true
+
+        guard case .directDevice = MobileCapabilities.decide("lights out", devices: [light], state: withCloud).lane else {
+            return XCTFail("a light belongs to the device route, not the cloud")
+        }
     }
 
     /// What it offers depends on what this phone can actually do about it.

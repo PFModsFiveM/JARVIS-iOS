@@ -77,6 +77,9 @@ enum MobileCapabilities {
         var footageJoined: Bool = false
         var locationReporting: Bool = false
         var alertsOn: Bool = false
+        /// Whether this phone has a cloud provider of its own to answer a general question with.
+        /// False until the owner configures one: nothing is shipped with a key.
+        var cloudReady: Bool = false
     }
 
     // MARK: The declaration
@@ -205,35 +208,83 @@ enum MobileCapabilities {
     // MARK: Routing
 
     /// Where a request is carried out.
-    enum Route: Equatable {
-        /// This phone, by a capability it has: `LocalCapability` decided which.
-        case thisPhone(LocalCapability)
-        /// PC-Prime, which is answering.
+    /// Which node carries a request out.
+    ///
+    /// The five lanes are the whole routing vocabulary, and the names are the ones the architecture
+    /// uses so a diagnostic, a test and a log line all say the same word:
+    ///
+    /// - `localMobile` - this phone, from what it knows itself. A battery, a wake packet, what the
+    ///   pre-login service says Windows is doing.
+    /// - `directDevice` - this phone to a vendor, bypassing the PC because the PC cannot relay.
+    /// - `pcPrime` - delegated to the PC, which understands the sentence better than any reading
+    ///   here and owns the state of everything at the desk.
+    /// - `cloud` - a general question answered without the PC, when the owner has configured a
+    ///   provider. Text only: see `CloudIntelligence`.
+    /// - `unavailable` - nothing can do it, said in words rather than as a transport error.
+    enum MobileLane: Equatable {
+        case localMobile(LocalCapability)
+        case directDevice(LocalCapability)
         case pcPrime
-        /// PC-Prime is the only node that could, and it is not answering. The words are the answer.
-        case waitingForThePC(String)
+        case cloud
+        case unavailable(String)
+
+        /// Whether this lane needs the PC to be answering.
+        var needsThePC: Bool { self == .pcPrime }
+
+        /// The capability behind a lane this phone carries out itself.
+        var capability: LocalCapability? {
+            switch self {
+            case .localMobile(let capability), .directDevice(let capability): return capability
+            case .pcPrime, .cloud, .unavailable: return nil
+            }
+        }
     }
 
-    /// Decides which node a sentence belongs to.
+    /// The lane a request takes, and what to do if that lane turns out not to work.
     ///
-    /// The order is the architecture. A PC that is answering gets everything, including the three
-    /// requests this phone *could* handle: the PC understands the sentence better than any reading
-    /// here, owns the device state, and tells every other node what changed. Only once the PC is
-    /// not answering does this phone consider doing something itself - and then only the narrow set
-    /// `LocalCapability` recognises.
-    ///
-    /// What is new is the third answer. A request that needs the PC, with the PC off, used to be
-    /// sent anyway and fail as a transport error. It is a sentence JARVIS can answer perfectly
-    /// well - *that machine does this, it is not answering, here is what I can do* - and a node
-    /// that knows what the other nodes do is able to say it.
-    static func route(_ sentence: String, devices: [StandbyDevice], state: NodeState) -> Route {
-        if state.pcAnswering { return .pcPrime }
+    /// The fallback is the part that was missing. A lane is chosen from what was true a moment ago -
+    /// "the bridge is up" - and the gap between choosing and sending is exactly where a PC goes to
+    /// sleep. Without a second lane the owner gets a transport error for a light this phone could
+    /// have switched itself, which is the failure the whole standalone path exists to prevent.
+    struct MobileDecision: Equatable {
+        let lane: MobileLane
+        let fallback: MobileLane?
 
-        if let local = LocalCapability.of(sentence, devices: devices) {
-            return .thisPhone(local)
+        init(_ lane: MobileLane, fallback: MobileLane? = nil) {
+            self.lane = lane
+            self.fallback = fallback
+        }
+    }
+
+    /// Decides which node a sentence belongs to, and which node catches it if that one drops.
+    ///
+    /// The order is the architecture, and it has not changed: a PC that is answering gets
+    /// everything, including the requests this phone *could* handle, because it understands the
+    /// sentence better and owns the device state. What is new is that choosing the PC no longer
+    /// throws away the knowledge that this phone could have done it - that becomes the fallback,
+    /// and the PC dropping between the decision and the request is no longer the owner's problem.
+    static func decide(_ sentence: String, devices: [StandbyDevice], state: NodeState) -> MobileDecision {
+        let local = LocalCapability.of(sentence, devices: devices)
+
+        if let local {
+            // A device command has two genuine routes. Everything else this phone can do - a
+            // battery, a wake, a machine's own state - has one, and it is this phone.
+            let mine: MobileLane = local.isADeviceCommand ? .directDevice(local) : .localMobile(local)
+
+            return state.pcAnswering
+                ? MobileDecision(.pcPrime, fallback: mine)
+                : MobileDecision(mine)
         }
 
-        return .waitingForThePC(waiting(state))
+        if state.pcAnswering { return MobileDecision(.pcPrime) }
+
+        // Nothing here can do it and the PC is not there. A general question still has somewhere to
+        // go when the owner has given this phone a provider of its own.
+        if state.cloudReady {
+            return MobileDecision(.cloud, fallback: .unavailable(waiting(state)))
+        }
+
+        return MobileDecision(.unavailable(waiting(state)))
     }
 
     /// What to say when the request belongs to a PC that is not answering.

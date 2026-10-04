@@ -33,6 +33,14 @@ enum LocalCapability: Equatable {
     /// switch takes and the same one the PC would have taken.
     case device(id: String, command: StandbyCommand)
 
+    /// Work a device whose direction the sentence did not give - "switch the bedroom light".
+    ///
+    /// Separate from `device` because the direction is not knowable here: it depends on what the
+    /// device is doing now, which `SmartHomeModel` knows and this does not. Kept out of
+    /// `StandbyCommand` on purpose - that is the vendor's vocabulary, and SwitchBot has no toggle,
+    /// so a command that cannot be sent should not be representable as one that can.
+    case deviceToggle(id: String)
+
     /// How a device is doing for battery - programme §18.
     ///
     /// Here by the same test as the others: a battery is readable only by the device it is in, so
@@ -50,6 +58,7 @@ enum LocalCapability: Equatable {
         case .wake: return "device.power.wake"
         case .state: return "device.power.state"
         case .power: return "device.power.battery"
+        case .deviceToggle: return "devices.toggle"
         case .device(_, let command):
             switch command {
             case .on: return "devices.power.on"
@@ -59,11 +68,22 @@ enum LocalCapability: Equatable {
         }
     }
 
+    /// Whether this is a command to a device in the house, rather than something about a machine.
+    ///
+    /// The distinction the router turns on: a device command is the one capability with two real
+    /// routes to the same outcome, so it is the one that has a fallback worth keeping.
+    var isADeviceCommand: Bool {
+        switch self {
+        case .device, .deviceToggle: return true
+        case .wake, .state, .power: return false
+        }
+    }
+
     /// What the request was about, when it named something.
     var target: String? {
         switch self {
         case .wake(let target), .state(let target), .power(let target): return target
-        case .device(let id, _): return id
+        case .device(let id, _), .deviceToggle(let id): return id
         }
     }
 
@@ -140,47 +160,114 @@ enum LocalCapability: Equatable {
         return words.contains(where: { about.contains($0) })
     }
 
-    /// A device the PC taught this phone to reach, when the sentence clearly names one.
+    /// A device the PC taught this phone to reach, when the sentence names one.
     ///
-    /// Deliberately strict in both directions. Every word of the device's own name - or its room
-    /// and its kind - must be in the sentence, so "turn the light on" with two lights in the house
-    /// matches neither rather than guessing one; and the sentence must carry an unambiguous verb,
-    /// so "is the bedroom light on" is a question for the PC and not a command to switch it.
+    /// Four tiers, strongest first, and the tier only matters when it is the only one that matches.
+    /// The point of the ladder is that strictness should cost nothing when there is nothing to be
+    /// ambiguous about: a house with one reachable light should answer "lights out", and a house
+    /// with four should refuse it rather than pick one.
+    ///
+    /// 1. **Every word of the device's name.** "turn the bedroom light off".
+    /// 2. **Every word of its room, plus its kind.** "turn the bedroom light off" where the device
+    ///    is called something else but sits in the bedroom.
+    /// 3. **Its kind alone, when no other reachable device shares that kind.** "lights out",
+    ///    "put the light on". With two lights this matches both and so matches nothing.
+    /// 4. **A bare pronoun, when there is exactly one reachable device at all.** "turn that off".
+    ///
+    /// Singular and plural are the same word here - "lights" and "light" - because they are the
+    /// same word to the owner, and a rule that heard only one of them would be a rule about
+    /// grammar rather than about which switch was meant.
     private static func aDeviceThisPhoneCanReach(_ words: [String], devices: [StandbyDevice]) -> LocalCapability? {
         guard !devices.isEmpty else { return nil }
 
         let asking = ["is", "are", "was", "has", "does", "did", "whats", "what", "hows", "how"]
         guard !words.contains(where: { asking.contains($0) }) else { return nil }
 
+        guard let wanted = aDirection(words) else { return nil }
+
+        let said = Set(words.map(singular))
+
+        guard let only = theOneMeant(said, devices: devices) else { return nil }
+
+        // A Bot on a push button has no on and off, and a switch has no bare press. Asked for the
+        // wrong one, the sentence goes to the PC, which can explain it better than a word list can.
+        switch wanted {
+        case .toggle:
+            // Nothing here knows which way it would go; `SmartHomeModel` does, and says so honestly
+            // when it does not. A push-button Bot has only one thing it can do, so a toggle is it.
+            return only.switches ? .deviceToggle(id: only.id) : .device(id: only.id, command: .press)
+        case .press:
+            return only.switches ? nil : .device(id: only.id, command: .press)
+        case .on, .off:
+            guard only.switches else { return .device(id: only.id, command: .press) }
+            return .device(id: only.id, command: wanted == .on ? .on : .off)
+        }
+    }
+
+    /// What the sentence asked for, when it asked for something unambiguous.
+    ///
+    /// `toggle` is a direction in the sense that matters - the owner has asked for the device to be
+    /// worked - while leaving which way it goes to whatever knows the state.
+    private enum Direction: Equatable { case on, off, press, toggle }
+
+    private static func aDirection(_ words: [String]) -> Direction? {
         let on = words.contains("on") || (words.contains("light") && words.contains("up"))
         let off = words.contains("off") || words.contains("out")
-        let press = words.contains("press") || words.contains("toggle") || words.contains("flip")
+        let press = words.contains("press")
 
         // "turn it on and off" names two opposite things and is nobody's command.
         guard !(on && off) else { return nil }
 
-        let command: StandbyCommand
-        if press { command = .press } else if on { command = .on } else if off { command = .off } else { return nil }
+        if press { return .press }
+        if on { return .on }
+        if off { return .off }
 
-        let said = Set(words)
+        // No direction, but a verb that means "work it": "switch the bedroom light", "toggle the
+        // lamp", "flip the light". Which way that goes is decided against the state, not here.
+        let working = ["switch", "toggle", "flip"]
+        return words.contains(where: { working.contains($0) }) ? .toggle : nil
+    }
 
-        let matches = devices.filter { device in
+    /// The one reachable device the sentence meant, or nil when that is not one device.
+    private static func theOneMeant(_ said: Set<String>, devices: [StandbyDevice]) -> StandbyDevice? {
+        // 1 and 2: the device's own name, or its room and its kind.
+        let named = devices.filter { device in
             let name = pieces(device.name)
             if !name.isEmpty && name.isSubset(of: said) { return true }
 
-            // "bedroom light" where the device is called something else but sits in the bedroom.
             let room = pieces(device.room ?? "")
-            return !room.isEmpty && room.isSubset(of: said) && said.contains(device.kind.lowercased())
+            return !room.isEmpty && room.isSubset(of: said) && said.contains(singular(device.kind.lowercased()))
         }
+        if named.count == 1 { return named.first }
 
-        guard matches.count == 1, let only = matches.first else { return nil }
+        // Two devices whose names are both wholly inside the sentence is a sentence nothing here
+        // can resolve, and going on to a weaker tier would resolve it by being less careful.
+        guard named.isEmpty else { return nil }
 
-        // A Bot on a push button has no on and off, and a switch has no bare press. Asked for the
-        // wrong one, the sentence goes to the PC, which can explain it better than a word list can.
-        if only.switches && command == .press { return nil }
-        if !only.switches && command != .press { return .device(id: only.id, command: .press) }
+        // 3: the kind alone, when it belongs to one device.
+        let byKind = devices.filter { said.contains(singular($0.kind.lowercased())) }
+        if byKind.count == 1 { return byKind.first }
+        guard byKind.isEmpty else { return nil }
 
-        return .device(id: only.id, command: command)
+        // 4: "that", "it", "them" - a referent, with one device to be.
+        let pronouns: Set<String> = ["it", "that", "them", "those", "these", "this"]
+        guard devices.count == 1, !said.isDisjoint(with: pronouns) else { return nil }
+
+        return devices.first
+    }
+
+    /// A word with a plural "s" taken off, so "lights" and "light" are one word.
+    ///
+    /// Deliberately crude: it only drops a trailing "s" from a word long enough for that to be a
+    /// plural rather than the whole word. Nothing here needs to know English, only that the owner
+    /// says "lights" about one light as often as not.
+    private static func singular(_ word: String) -> String {
+        guard word.count > 3, word.hasSuffix("s"),
+              // "ss", "us" and "is" endings are not plurals: "status" is not a "statu".
+              !word.hasSuffix("ss"), !word.hasSuffix("us"), !word.hasSuffix("is")
+        else { return word }
+
+        return String(word.dropLast())
     }
 
     /// Whether a sentence is asking how something is doing for battery.
@@ -213,11 +300,15 @@ enum LocalCapability: Equatable {
         return named.count <= 1 ? .power(target: named.first) : nil
     }
 
-    /// A display name as the words it is made of, lower case.
+    /// A display name as the words it is made of, lower case and singular.
+    ///
+    /// Singular on both sides of the comparison or the comparison is about spelling: a device the
+    /// owner called "Bedroom Lights" would never match a sentence saying "bedroom light".
     private static func pieces(_ text: String) -> Set<String> {
         Set(text.lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { !$0.isEmpty })
+            .filter { !$0.isEmpty }
+            .map(singular))
     }
 
     /// The machine the sentence named, when it named one in particular.

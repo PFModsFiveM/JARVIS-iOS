@@ -17,11 +17,150 @@ struct AskJarvisIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
-        let answer = try await IntentLink.run { client in
-            let reply = try await client.request("ask", ["text": request], timeout: 90)
-            return reply.kind == "answer" ? (reply.text("text") ?? "Done.") : reply.message
+        // The PC first, exactly as the app does: it understands the sentence better than any
+        // reading on the phone and owns the state of everything at the desk.
+        do {
+            let answer = try await IntentLink.run { client in
+                let reply = try await client.request("ask", ["text": request], timeout: 90)
+                return reply.kind == "answer" ? (reply.text("text") ?? "Done.") : reply.message
+            }
+            return .result(value: answer, dialog: IntentDialog(stringLiteral: answer))
+        } catch {
+            // And then this phone, which is the whole point of asking by voice with the PC asleep.
+            //
+            // Without this, "Hey Siri, ask JARVIS to turn the lights out" failed with a connection
+            // error in precisely the situation it exists for - the owner in bed, the PC off - while
+            // the same words typed into the app worked. One sentence, two answers, depending on
+            // which door it came through: the routing has to be shared, not reimplemented.
+            guard let answer = await IntentStandalone.answer(request) else { throw error }
+            return .result(value: answer, dialog: IntentDialog(stringLiteral: answer))
         }
-        return .result(value: answer, dialog: IntentDialog(stringLiteral: answer))
+    }
+}
+
+/// What an App Intent can do with the PC unreachable.
+///
+/// The same `LocalCapability` reading the app uses and the same `StandbyExecutor` the screens use,
+/// so Siri is another way in rather than another implementation. Nil when nothing here can do it,
+/// which is the caller's cue to report the PC's own failure instead of inventing an answer.
+enum IntentStandalone {
+    @MainActor
+    static func answer(_ sentence: String) async -> String? {
+        let bindings = StandbyBindings.load()
+
+        guard let capability = LocalCapability.of(sentence, devices: bindings) else { return nil }
+
+        switch capability {
+        case .device(let id, let command):
+            return await work(id, command, bindings: bindings)
+
+        case .deviceToggle(let id):
+            // Nothing out here has read the switch, and a toggle against an unknown state is a
+            // guess. The app says so too; this says it in the same words.
+            let name = bindings.first { $0.id == id }?.name ?? "device"
+            return MobilePhrases.cannotToggleUnknown(name)
+
+        case .power(let target):
+            PowerReporter.shared.read()
+            let matched = PowerReporter.matching(target, in: PowerReporter.shared.readings)
+            if matched.isEmpty, let target { return MobilePhrases.nothingCalledWithABattery(target) }
+            return PowerReporter.sayAll(matched)
+
+        case .state:
+            guard MachineLink.shared.isPaired, let report = await MachineLink.shared.ask(force: true) else { return nil }
+            return MobilePhrases.onButCannotSay(report.machine)
+
+        case .wake:
+            // Waking is `WakePCIntent`'s, which Siri already offers by name and which reports what
+            // it actually sent. Answering it here would be a second path to the same packet.
+            return nil
+        }
+    }
+
+    /// One device command, through the direct route, with the app's own wording.
+    @MainActor
+    static func work(_ id: String, _ command: StandbyCommand, bindings: [StandbyDevice]) async -> String? {
+        guard let binding = bindings.first(where: { $0.id == id }),
+              let credentials = SwitchBotCredentials.load(),
+              credentials.usable
+        else { return nil }
+
+        let done = await StandbyExecutor.perform(command, on: binding, credentials: credentials)
+
+        guard let on = done.confirmed else {
+            return "\(binding.name): \(done.sentence)"
+        }
+
+        return on ? MobilePhrases.switchedOn(binding.name) : MobilePhrases.switchedOff(binding.name)
+    }
+}
+
+// MARK: - the house
+
+enum DeviceDirection: String, AppEnum {
+    case on, off, press
+
+    static var typeDisplayRepresentation: TypeDisplayRepresentation { "Direction" }
+    static var caseDisplayRepresentations: [DeviceDirection: DisplayRepresentation] {
+        [.on: "On", .off: "Off", .press: "Press"]
+    }
+
+    var command: StandbyCommand {
+        switch self {
+        case .on: return .on
+        case .off: return .off
+        case .press: return .press
+        }
+    }
+}
+
+/// Switch a light - through the PC when it is there, and straight to the vendor when it is not.
+///
+/// A Shortcuts automation is one of the best reasons this exists: "when my alarm goes off, lights
+/// on" has to work at 06:30 with the PC asleep, and a step that needs the PC would simply fail
+/// there every morning. So the route is the app's route, fallback included.
+struct SwitchDeviceIntent: AppIntent {
+    static var title: LocalizedStringResource { "Switch a light" }
+    static var description: IntentDescription {
+        IntentDescription("Turns one of JARVIS's devices on or off. Works with your PC asleep, if this phone has its own SwitchBot token.")
+    }
+    static var openAppWhenRun: Bool { false }
+
+    @Parameter(title: "Device", requestValueDialog: "Which device, sir?")
+    var device: String
+
+    @Parameter(title: "Direction", default: .off)
+    var direction: DeviceDirection
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
+        let bindings = StandbyBindings.load()
+
+        guard let binding = StandbyExecutor.binding(named: device, in: bindings) else {
+            let said = bindings.isEmpty
+                ? "This phone hasn't been told what it can reach yet, sir. Open JARVIS once while your PC is on."
+                : "I don't know a device called \(device), sir. I know \(bindings.map(\.name).joined(separator: ", "))."
+            return .result(value: said, dialog: IntentDialog(stringLiteral: said))
+        }
+
+        // The PC first: it owns the state and tells every other node what changed.
+        if let said = try? await IntentLink.run({ client -> String in
+            let kind = direction == .press ? "devices.press" : "devices.power"
+            var body: [String: Any] = ["id": binding.id]
+            if direction != .press { body["on"] = direction == .on }
+
+            let reply = try await client.request(kind, body, timeout: 25)
+            return reply.message.isEmpty ? MobilePhrases.pressed(binding.name) : reply.message
+        }) {
+            return .result(value: said, dialog: IntentDialog(stringLiteral: said))
+        }
+
+        guard let said = await IntentStandalone.work(binding.id, direction.command, bindings: bindings) else {
+            let why = "I couldn't reach your PC, sir, and this phone has no SwitchBot token of its own. Add one in JARVIS's settings and I can switch it without the PC."
+            return .result(value: why, dialog: IntentDialog(stringLiteral: why))
+        }
+
+        return .result(value: said, dialog: IntentDialog(stringLiteral: said))
     }
 }
 
@@ -361,6 +500,10 @@ struct JarvisShortcuts: AppShortcutsProvider {
                     shortTitle: "Wake PC", systemImageName: "power")
         AppShortcut(intent: SecurityStatusIntent(), phrases: ["\(.applicationName) security status"],
                     shortTitle: "Security status", systemImageName: "lock.shield")
+        AppShortcut(intent: SwitchDeviceIntent(),
+                    phrases: ["Switch a light with \(.applicationName)", "\(.applicationName) switch a light",
+                              "\(.applicationName) lights"],
+                    shortTitle: "Switch a light", systemImageName: "lightbulb")
     }
 }
 

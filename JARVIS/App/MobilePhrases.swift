@@ -121,6 +121,11 @@ enum MobilePhrases {
         "I don't know a device by that name, sir."
     }
 
+    /// Asked to switch something over when nothing has read which way it is.
+    static func cannotToggleUnknown(_ device: String) -> String {
+        "I don't know whether the \(device) is on at the moment, sir, so I can't switch it over. Say on or off and I'll do that."
+    }
+
     static func switchedOn(_ device: String) -> String { "\(device) is on, sir." }
 
     static func switchedOff(_ device: String) -> String { "\(device) is off, sir." }
@@ -169,6 +174,7 @@ enum MobilePhrases {
             nothingReadable(),
             nothingCalledWithABattery("the tractor"),
             noSuchDevice(),
+            cannotToggleUnknown("Bedroom Light"),
             switchedOn("Bedroom Light"),
             switchedOff("Bedroom Light"),
             pressed("Desk Lamp"),
