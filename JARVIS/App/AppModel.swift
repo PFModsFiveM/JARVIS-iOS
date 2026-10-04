@@ -927,6 +927,13 @@ final class AppModel: ObservableObject {
         // what changed: this may be the first the PC has heard, and a reading it never received is
         // indistinguishable from one that has not moved.
         await PowerReporter.shared.reportEverything()
+
+        // And what every other node said. The headset's battery is readable only by the PC it is
+        // paired to, so this is the only way it reaches a phone at all.
+        await PowerReporter.shared.askTheOthers { kind in
+            guard let client = try? await self.session() else { throw BridgeError.closed }
+            return try await client.request(kind)
+        }
     }
 
     /// Starts reporting this phone's power, once.

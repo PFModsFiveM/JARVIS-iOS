@@ -540,10 +540,22 @@ private struct PowerPage: View {
                 StatusRow(title: "Reporting",
                           status: model.link.isOnline ? .live("To \(model.pcName)") : .configured("Waiting for the PC"))
                 ActionRow(title: "Read and send now", symbol: "arrow.clockwise") {
-                    Task { await reporter.reportEverything() }
+                    Task { await model.refresh() }
                 }
             } header: {
                 HUDSectionTitle(text: "The PC")
+            }
+
+            // §14. The other half of a shared model: a headset's battery is readable only by the
+            // machine it is paired to, so this is the only way it reaches a phone at all.
+            if !reporter.elsewhere.isEmpty {
+                Section {
+                    ForEach(reporter.elsewhere) { SharedPowerRow(reading: $0) }
+                } header: {
+                    HUDSectionTitle(text: "What the other nodes said")
+                } footer: {
+                    SettingsNote("Worded by your PC from the time each device measured its own level, so a figure that arrived just now is not shown as current unless it is.")
+                }
             }
 
             Section {
@@ -553,6 +565,39 @@ private struct PowerPage: View {
         }
         .hudList()
         .task { reporter.read() }
+    }
+}
+
+/// One other node's reading, in the PC's own words.
+///
+/// The sentence comes from the PC rather than being rebuilt here: it has the timestamps and has
+/// already decided how old the reading is, and two implementations of one freshness rule is how
+/// two screens come to disagree about one battery.
+private struct SharedPowerRow: View {
+    let reading: SharedPowerReading
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
+                StatusDot(status: reading.isLive ? .live("") : .configured(""))
+                Text(reading.name).foregroundStyle(HUD.text)
+                Spacer(minLength: 8)
+                if let percent = reading.percent {
+                    Text("\(percent)%")
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(reading.isLive ? HUD.accent : HUD.dim)
+                } else {
+                    Text("not reported").font(.caption).foregroundStyle(HUD.dim)
+                }
+            }
+            if !reading.said.isEmpty {
+                Text(reading.said)
+                    .font(.caption).foregroundStyle(HUD.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 2)
+        .hudRow()
     }
 }
 

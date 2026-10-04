@@ -70,6 +70,15 @@ final class PowerReporter: ObservableObject {
     /// What this phone last read about itself and its accessories.
     @Published private(set) var readings: [PowerReading] = []
 
+    /// What the PC last said about every node - programme §14.
+    ///
+    /// The other direction, and it is the half that makes this a shared model rather than two
+    /// separate ones. A headset's battery is readable only by the machine it is paired to, so this
+    /// phone cannot look; the PC can, and says. Each row arrives with the time its own device
+    /// measured it and how old the PC judged that to be, so a figure is never shown as current
+    /// because it happened to arrive just now.
+    @Published private(set) var elsewhere: [SharedPowerReading] = []
+
     /// What was last sent, so an unchanged reading is not sent again on every heartbeat.
     private var sent: [String: PowerReading] = [:]
 
@@ -154,6 +163,21 @@ final class PowerReporter: ObservableObject {
 
         await send(changed)
         for reading in changed { sent[reading.deviceId] = reading }
+    }
+
+    /// Asks the PC what every node last said about power.
+    ///
+    /// Quietly: a PC that predates the request answers "failed", and what this phone already had
+    /// stays as it was rather than being wiped by an older PC.
+    func askTheOthers(_ ask: (String) async throws -> BridgeMessage) async {
+        guard let reply = try? await ask("power"), reply.kind == "power" else { return }
+
+        let rows = (reply.body["devices"] as? [[String: Any]] ?? []).compactMap(SharedPowerReading.init)
+
+        // This phone's own rows come back with the rest; they are already on the page from the
+        // reading it took itself, and the local one is the fresher of the two.
+        let mine = Set(readings.map(\.deviceId))
+        elsewhere = rows.filter { !mine.contains($0.deviceId) }
     }
 
     /// Sends everything, changed or not. For a reconnection: the PC may never have heard any of it.
@@ -263,5 +287,41 @@ final class PowerReporter: ObservableObject {
         }
 
         return []
+    }
+}
+
+/// One device's power as the PC reports it, for every node - programme §14.
+///
+/// The PC has already decided how fresh the reading is and how it should be said, from the
+/// timestamps it holds, so neither is worked out a second time here: two implementations of one
+/// freshness rule is how two screens come to disagree about one battery. The raw timestamp comes
+/// too, so this phone can age it further if it sits on the reply.
+struct SharedPowerReading: Identifiable, Equatable {
+    let deviceId: String
+    let name: String
+    let percent: Int?
+    let charge: String
+    let reporter: String
+    let measuredAt: Date?
+    let freshness: String
+    /// What JARVIS would say about it, worded by the PC.
+    let said: String
+
+    var id: String { deviceId }
+
+    /// Still worth quoting as the present tense.
+    var isLive: Bool { freshness == "Live" }
+
+    init?(_ row: [String: Any]) {
+        guard let deviceId = row["deviceId"] as? String, !deviceId.isEmpty else { return nil }
+
+        self.deviceId = deviceId
+        name = row["name"] as? String ?? deviceId
+        percent = (row["percent"] as? NSNumber)?.intValue
+        charge = row["charge"] as? String ?? "Unknown"
+        reporter = row["reporter"] as? String ?? "Unknown"
+        measuredAt = (row["measuredAt"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) }
+        freshness = row["freshness"] as? String ?? "Unknown"
+        said = row["said"] as? String ?? ""
     }
 }
