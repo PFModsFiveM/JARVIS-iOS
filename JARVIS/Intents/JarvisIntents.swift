@@ -476,6 +476,16 @@ struct WakePCIntent: AppIntent {
 /// at most 10", and the eleventh had been sitting here since 23 September keeping the whole app
 /// from compiling. Watching the screen is the one that went: every other phrase here does
 /// something while the phone stays in a pocket, and that one ends with looking at it anyway.
+/// The phrases Siri offers without the owner building a shortcut first.
+///
+/// **iOS allows ten, and refuses to build at eleven.** Not a soft limit: the metadata processor
+/// fails the whole target, so this list is a budget rather than a collection. Everything not in it
+/// is still a usable intent - reachable in Shortcuts, in an automation, and through "Ask JARVIS",
+/// which routes the sentence the same way the app does.
+///
+/// Volume is the one that gives up its phrase. It needs the PC awake to mean anything, and
+/// "ask JARVIS to set the volume to twenty" reaches the same place; switching a light has to work
+/// with the PC asleep, which no other phrase here can do.
 struct JarvisShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: AskJarvisIntent(), phrases: ["Ask \(.applicationName)", "Talk to \(.applicationName)"],
@@ -488,8 +498,6 @@ struct JarvisShortcuts: AppShortcutsProvider {
                     shortTitle: "Now playing", systemImageName: "music.note")
         AppShortcut(intent: MediaIntent(), phrases: ["\(.applicationName) pause the music", "\(.applicationName) next song", "Control music with \(.applicationName)"],
                     shortTitle: "Music", systemImageName: "playpause")
-        AppShortcut(intent: SetVolumeIntent(), phrases: ["Set PC volume with \(.applicationName)", "\(.applicationName) volume"],
-                    shortTitle: "PC volume", systemImageName: "speaker.wave.2")
         AppShortcut(intent: OpenOnPCIntent(), phrases: ["Open an app on my PC with \(.applicationName)", "\(.applicationName) open on my PC"],
                     shortTitle: "Open on PC", systemImageName: "macwindow")
         AppShortcut(intent: RunMacroIntent(), phrases: ["Run \(\.$macro) with \(.applicationName)", "\(.applicationName) run \(\.$macro)"],
