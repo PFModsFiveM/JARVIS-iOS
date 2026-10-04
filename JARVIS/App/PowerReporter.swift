@@ -210,8 +210,7 @@ final class PowerReporter: ObservableObject {
     /// wholesale - this phone only ever says it about readings it took itself seconds ago.
     static func say(_ reading: PowerReading, now: Date = Date()) -> String {
         guard let percent = reading.percent else {
-            return reading.because.map { "I've no battery reading for \(reading.name), sir - \($0)" }
-                ?? "I've no battery reading for \(reading.name), sir."
+            return MobilePhrases.noBatteryReading(reading.name, because: reading.because)
         }
 
         var charging = ""
@@ -225,16 +224,16 @@ final class PowerReporter: ObservableObject {
         // rule the PC uses: a percentage stated in the present tense is a claim about now.
         if age > 120 {
             let minutes = Int((age / 60).rounded())
-            return "\(reading.name) was at \(percent) per cent, sir, \(minutes) minute\(minutes == 1 ? "" : "s") ago."
+            return MobilePhrases.batteryThen(reading.name, percent, minutes: minutes)
         }
 
-        return "\(reading.name) is at \(percent) per cent\(charging)\(saving), sir."
+        return MobilePhrases.batteryNow(reading.name, percent, charging: charging, saving: saving)
     }
 
     /// Everything readable, as JARVIS would say it.
     static func sayAll(_ readings: [PowerReading], now: Date = Date()) -> String {
         readings.isEmpty
-            ? "I can't read anything's battery at the moment, sir."
+            ? MobilePhrases.nothingReadable()
             : readings.map { say($0, now: now) }.joined(separator: "\n")
     }
 

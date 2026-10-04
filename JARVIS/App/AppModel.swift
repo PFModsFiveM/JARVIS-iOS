@@ -454,15 +454,15 @@ final class AppModel: ObservableObject {
     func wakeAnswer() -> String {
         let name = wakeProfile.deviceName.isEmpty ? "your PC" : wakeProfile.deviceName
 
-        if !wakeProfile.enabled { return "Waking \(name) is switched off, sir." }
+        if !wakeProfile.enabled { return MobilePhrases.wakingIsOff(name) }
         if wakeProfile.mac == nil {
-            return "I don't know \(name)'s network card yet, sir. Connect to it once at home and it will tell me."
+            return MobilePhrases.cardUnknown(name)
         }
         if WakeOnLanService.strategies(for: wakeProfile, cellular: network.cellular).isEmpty {
-            return "I can only wake \(name) from home, sir - there's no way in from outside set up yet."
+            return MobilePhrases.onlyFromHome(name)
         }
 
-        return "Sending the wake request now, sir. I'll connect as soon as \(name) answers."
+        return MobilePhrases.sendingWake(name)
     }
 
     /// Clears a finished wake so the page goes back to the ordinary states.
@@ -536,7 +536,7 @@ final class AppModel: ObservableObject {
         let typed = mac.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard let card = MacAddress(typed) else {
-            return "That is not a card address. Six pairs of hex digits, like 04-7C-16-4E-A7-F5."
+            return MobilePhrases.notACardAddress()
         }
 
         let where_ = broadcast.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1023,7 +1023,7 @@ final class AppModel: ObservableObject {
             let matched = PowerReporter.matching(target, in: PowerReporter.shared.readings)
 
             let answer = matched.isEmpty && target != nil
-                ? "I've nothing called \(target!) with a battery I can read, sir."
+                ? MobilePhrases.nothingCalledWithABattery(target!)
                 : PowerReporter.sayAll(matched)
 
             lines.append(ChatLine(speaker: .jarvis, text: answer))
@@ -1096,26 +1096,26 @@ final class AppModel: ObservableObject {
     /// is doing, and anything beyond that would be this phone guessing on its behalf.
     func machineAnswer() async -> String {
         guard MachineLink.shared.isPaired else {
-            return "I can't tell while JARVIS isn't running. Pair this phone with the PC's service and I'll be able to say whether it's off, locked, or just not signed in."
+            return MobilePhrases.cannotTellWithoutTheService()
         }
 
         guard let report = await MachineLink.shared.ask(force: true) else {
-            return "I can't reach \(pcName) at all, so it's either off or not on a network I can see from here."
+            return MobilePhrases.cannotReachAtAll(pcName)
         }
 
         switch report.session {
         case .nobodySignedIn:
-            return "\(report.machine) is on, but nobody has signed in yet, so JARVIS isn't running."
+            return MobilePhrases.nobodySignedIn(report.machine)
         case .locked:
             return report.desktopRunning
-                ? "\(report.machine) is locked. JARVIS is running and will answer once you unlock it."
-                : "\(report.machine) is locked, and JARVIS isn't running on it."
+                ? MobilePhrases.lockedWithJarvisRunning(report.machine)
+                : MobilePhrases.lockedWithoutJarvis(report.machine)
         case .inUse:
             return report.desktopRunning
-                ? "\(report.machine) is awake and JARVIS is running - I just couldn't reach it from here."
-                : "\(report.machine) is awake, but JARVIS isn't running on it."
+                ? MobilePhrases.awakeWithJarvisRunning(report.machine)
+                : MobilePhrases.awakeWithoutJarvis(report.machine)
         case .unknown:
-            return "\(report.machine) is on, but it couldn't say what it's doing."
+            return MobilePhrases.onButCannotSay(report.machine)
         }
     }
 

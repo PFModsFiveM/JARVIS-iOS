@@ -245,13 +245,13 @@ enum MobileCapabilities {
         let name = state.pcName
 
         if state.wakeEnabled && state.wakeReachable {
-            return "That one is \(name)'s, sir, and it isn't answering. Say \u{201C}wake my PC\u{201D} and I'll switch it on, then ask me again."
+            return MobilePhrases.thePCsAndItCanBeWoken(name)
         }
 
         if state.servicePaired {
-            return "That one is \(name)'s, sir, and it isn't answering. I can tell you what it's doing, but waking it isn't set up from here yet."
+            return MobilePhrases.thePCsAndItCannotBeWoken(name)
         }
 
-        return "That one is \(name)'s, sir, and it isn't answering. There's nothing I can do about it from this phone until waking it is set up."
+        return MobilePhrases.thePCsAndNothingCanBeDone(name)
     }
 }

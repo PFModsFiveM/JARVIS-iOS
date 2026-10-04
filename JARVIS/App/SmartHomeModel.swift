@@ -273,7 +273,7 @@ final class SmartHomeModel: ObservableObject {
     /// and the same wording as the panel's switch, so the two cannot drift.
     func work(_ id: String, _ want: StandbyCommand) async -> String {
         guard let device = shown.first(where: { $0.id == id }) else {
-            return "I don't know a device by that name."
+            return MobilePhrases.noSuchDevice()
         }
 
         switch want {
@@ -288,9 +288,16 @@ final class SmartHomeModel: ObservableObject {
         let after = shown.first(where: { $0.id == id })
 
         switch want {
-        case .on: return after?.isOn == true ? "\(device.name) is on." : "\(device.name): \(after?.statusText ?? "sent")."
-        case .off: return after?.isOff == true ? "\(device.name) is off." : "\(device.name): \(after?.statusText ?? "sent")."
-        case .press: return "Pressed \(device.name)."
+        case .on:
+            return after?.isOn == true
+                ? MobilePhrases.switchedOn(device.name)
+                : MobilePhrases.sentButUnconfirmed(device.name, after?.statusText ?? "")
+        case .off:
+            return after?.isOff == true
+                ? MobilePhrases.switchedOff(device.name)
+                : MobilePhrases.sentButUnconfirmed(device.name, after?.statusText ?? "")
+        case .press:
+            return MobilePhrases.pressed(device.name)
         }
     }
 
