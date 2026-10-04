@@ -62,6 +62,7 @@ struct RootView: View {
                 .tint(HUD.accent)
                 .task {
                     LiveActivity.shared.start()
+                    model.startReportingPower()
                     await model.connect()
                     if model.wakeWordOn { await model.setWakeWord(true) }
                 }

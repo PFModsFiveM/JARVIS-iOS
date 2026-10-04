@@ -37,6 +37,9 @@ enum SettingsDestination: String, CaseIterable, Hashable, Codable {
     // SMART HOME
     case smartHome = "smart-home"
 
+    // DEVICES & POWER
+    case power = "power"
+
     // SECURITY
     case footageStore = "footage-store"
 
@@ -58,6 +61,7 @@ enum SettingsCategory: String, CaseIterable, Hashable {
     case mobile
     case pcPrime
     case smartHome
+    case devices
     case security
     case learning
     case advanced
@@ -69,6 +73,7 @@ enum SettingsCategory: String, CaseIterable, Hashable {
         case .mobile: return "Mobile JARVIS"
         case .pcPrime: return "PC-Prime"
         case .smartHome: return "Smart home"
+        case .devices: return "Devices and power"
         case .security: return "Security"
         case .learning: return "Learning"
         case .advanced: return "Advanced"
@@ -83,6 +88,7 @@ enum SettingsCategory: String, CaseIterable, Hashable {
         switch self {
         case .mobile: return "What this phone can do on its own, with your PC off."
         case .pcPrime: return "The machine that does the heavy work, and how this phone reaches it."
+        case .devices: return "Battery and power, for every device JARVIS knows about."
         default: return nil
         }
     }
@@ -178,6 +184,15 @@ enum SettingsCatalogue {
                       symbol: "house",
                       category: .smartHome,
                       keywords: ["lights", "bedroom", "switchbot", "hub", "plug", "scene", "devices", "smart home"]),
+
+        // MARK: Devices and power
+        SettingsEntry(destination: .power,
+                      title: "Battery and power",
+                      subtitle: "This phone, and what it can read about what is paired with it.",
+                      symbol: "battery.75",
+                      category: .devices,
+                      keywords: ["battery", "charge", "charging", "power", "airpods", "headset",
+                                 "earbuds", "low power", "percent", "level"]),
 
         // MARK: Security
         SettingsEntry(destination: .footageStore,

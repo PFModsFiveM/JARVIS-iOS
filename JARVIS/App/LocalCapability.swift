@@ -33,11 +33,23 @@ enum LocalCapability: Equatable {
     /// switch takes and the same one the PC would have taken.
     case device(id: String, command: StandbyCommand)
 
+    /// How a device is doing for battery - programme §18.
+    ///
+    /// Here by the same test as the others: a battery is readable only by the device it is in, so
+    /// this phone's own level is something the PC cannot look up however awake it is. It reports
+    /// it over the bridge while connected, and with the PC off the reading is still here to be
+    /// read - which makes this the one question about power the phone must answer itself.
+    ///
+    /// The target is whatever was named, or nil for everything readable. Nothing here decides
+    /// whether the named thing exists: the reporter matches it against what it actually read.
+    case power(target: String?)
+
     /// The capability's name, as the PC's own tool catalogue would write it.
     var action: String {
         switch self {
         case .wake: return "device.power.wake"
         case .state: return "device.power.state"
+        case .power: return "device.power.battery"
         case .device(_, let command):
             switch command {
             case .on: return "devices.power.on"
@@ -50,7 +62,7 @@ enum LocalCapability: Equatable {
     /// What the request was about, when it named something.
     var target: String? {
         switch self {
-        case .wake(let target), .state(let target): return target
+        case .wake(let target), .state(let target), .power(let target): return target
         case .device(let id, _): return id
         }
     }
@@ -71,6 +83,11 @@ enum LocalCapability: Equatable {
             .filter { !$0.isEmpty }
 
         guard !words.isEmpty else { return nil }
+
+        // A battery, first. "Is my phone charging" carries both a machine word and a power word,
+        // so a wake rule asked before this one would read it as a request to switch something on -
+        // and the question is one only this phone can answer at all.
+        if let battery = aBatteryQuestion(words) { return battery }
 
         let waking = ["wake", "waken", "start", "boot", "power", "turn", "switch", "online"]
         let machines = ["pc", "computer", "workstation", "desktop", "rig", "machine", "tower"]
@@ -164,6 +181,36 @@ enum LocalCapability: Equatable {
         if !only.switches && command != .press { return .device(id: only.id, command: .press) }
 
         return .device(id: only.id, command: command)
+    }
+
+    /// Whether a sentence is asking how something is doing for battery.
+    ///
+    /// Anchored on the topic word - battery, charge, charging, charged - which is what separates
+    /// "is my phone charging" from "is my phone on", and what keeps a rule written around "what's
+    /// my X on" from claiming questions that have nothing to do with power. The same discriminator
+    /// the PC's own fast path uses, for the same reason.
+    ///
+    /// The target is the word before or after the topic that is not one of the question's own
+    /// words. Nothing is resolved here: the reporter decides whether it read anything by that name.
+    private static func aBatteryQuestion(_ words: [String]) -> LocalCapability? {
+        let topic = Set(["battery", "batteries", "charge", "charging", "charged"])
+        guard words.contains(where: { topic.contains($0) }) else { return nil }
+
+        // A command about power rather than a question about it: "charge my phone" is not something
+        // a phone can do to itself, and "turn the charging off" is nobody's request here.
+        let commanding = ["turn", "switch", "stop", "start", "set", "put", "plug", "unplug"]
+        guard !words.contains(where: { commanding.contains($0) }) else { return nil }
+
+        let ours = Set(["is", "are", "was", "what", "whats", "what's", "how", "hows", "how's", "much",
+                        "the", "my", "a", "of", "on", "in", "for", "at", "it", "has", "have", "does",
+                        "did", "got", "left", "level", "levels", "status", "tell", "me", "you", "can",
+                        "could", "would", "will", "please", "jarvis", "s"]).union(topic)
+
+        let named = words.filter { !ours.contains($0) && $0.count > 1 }
+
+        // One name, or none. Two means the sentence is about something this reading cannot pick
+        // out, and the PC - which has every node's readings - is the better place for it.
+        return named.count <= 1 ? .power(target: named.first) : nil
     }
 
     /// A display name as the words it is made of, lower case.

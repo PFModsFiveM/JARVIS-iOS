@@ -922,6 +922,24 @@ final class AppModel: ObservableObject {
 
         // And that this phone is in somebody's hand, which the PC cannot see for itself.
         await reportPresence()
+
+        // And its battery, which the PC cannot read for itself either. Everything rather than only
+        // what changed: this may be the first the PC has heard, and a reading it never received is
+        // indistinguishable from one that has not moved.
+        await PowerReporter.shared.reportEverything()
+    }
+
+    /// Starts reporting this phone's power, once.
+    ///
+    /// Here rather than in the reporter because the reporter does not own the connection and should
+    /// not: it reads batteries and words them, and this is the one line that says where the rows go.
+    func startReportingPower() {
+        PowerReporter.shared.send = { [weak self] readings in
+            guard let self, let client = try? await self.session() else { return }
+            _ = try? await client.request("power.report", ["devices": readings.map(\.row)])
+        }
+
+        PowerReporter.shared.start()
     }
 
     // MARK: asking
@@ -992,6 +1010,22 @@ final class AppModel: ObservableObject {
         // knows everything the service does and a great deal more.
         if case .state = local {
             let answer = await machineAnswer()
+            lines.append(ChatLine(speaker: .jarvis, text: answer))
+            if speakAnswers || spoken { voice.say(answer) }
+            return
+        }
+
+        // How a device is doing for battery. Readable only by the device it is in, so this phone
+        // answers it from what it read itself - and the answer carries its age by the same rule the
+        // PC uses, because a percentage in the present tense is a claim about now.
+        if case .power(let target) = local {
+            PowerReporter.shared.read()
+            let matched = PowerReporter.matching(target, in: PowerReporter.shared.readings)
+
+            let answer = matched.isEmpty && target != nil
+                ? "I've nothing called \(target!) with a battery I can read, sir."
+                : PowerReporter.sayAll(matched)
+
             lines.append(ChatLine(speaker: .jarvis, text: answer))
             if speakAnswers || spoken { voice.say(answer) }
             return

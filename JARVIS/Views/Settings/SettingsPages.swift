@@ -22,6 +22,7 @@ struct SettingsPage: View {
             case .waking: WakingPage()
             case .reaching: ReachingPage()
             case .smartHome: SmartHomePage()
+            case .power: PowerPage()
             case .footageStore: FootageStorePage()
             case .learning: LearningPage()
             case .diagnostics: DiagnosticsPage()
@@ -510,6 +511,107 @@ private struct DeviceReachRow: View {
             }
         }
         .hudRow()
+    }
+}
+
+// MARK: - Devices and power
+
+/// What this phone can read about power, and what it cannot - programme §17.
+///
+/// The second half is as much the point as the first. iOS gives an app its own battery and gives
+/// it nothing at all about anything paired over Bluetooth, so a page showing only what it can read
+/// would leave the owner wondering why their AirPods are missing. Named, with the reason, is the
+/// honest answer - and it is the same `because` the PC says aloud.
+private struct PowerPage: View {
+    @EnvironmentObject var model: AppModel
+    @ObservedObject private var reporter = PowerReporter.shared
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(reporter.readings) { PowerRow(reading: $0) }
+            } header: {
+                HUDSectionTitle(text: "This phone")
+            } footer: {
+                SettingsNote("Sent to your PC with the time each reading was taken, so it can say how a device is doing - and say how old the answer is rather than stating an hour-old figure as if it were now. Nothing about a battery is kept: it is true for minutes, so it never goes into what JARVIS remembers about you.")
+            }
+
+            Section {
+                StatusRow(title: "Reporting",
+                          status: model.link.isOnline ? .live("To \(model.pcName)") : .configured("Waiting for the PC"))
+                ActionRow(title: "Read and send now", symbol: "arrow.clockwise") {
+                    Task { await reporter.reportEverything() }
+                }
+            } header: {
+                HUDSectionTitle(text: "The PC")
+            }
+
+            Section {
+                SettingsNote("Ask JARVIS \u{201C}what\u{2019}s my phone\u{2019}s battery\u{201D} and this phone answers it itself, with your PC on or off - the one power question the PC cannot look up, because a battery is readable only by the device it is in.")
+                    .hudRow()
+            }
+        }
+        .hudList()
+        .task { reporter.read() }
+    }
+}
+
+private struct PowerRow: View {
+    let reading: PowerReading
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
+                Image(systemName: symbol)
+                    .font(.system(size: 15))
+                    .foregroundStyle(level)
+                    .frame(width: 26)
+                Text(reading.name).foregroundStyle(HUD.text)
+                Spacer(minLength: 8)
+                if let percent = reading.percent {
+                    Text("\(percent)%")
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(level)
+                } else {
+                    Text("not reported").font(.caption).foregroundStyle(HUD.dim)
+                }
+            }
+
+            if reading.charge == .charging || reading.charge == .full {
+                Text(reading.charge == .full ? "Charged" : "Charging")
+                    .font(.caption).foregroundStyle(HUD.accent)
+            }
+
+            if reading.lowPowerMode {
+                Text("Low Power Mode is on").font(.caption).foregroundStyle(HUD.amber)
+            }
+
+            if let because = reading.because {
+                Text(because)
+                    .font(.caption).foregroundStyle(HUD.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 2)
+        .hudRow()
+    }
+
+    /// The battery drawn at the level it is at, which reads at a glance where a number does not.
+    private var symbol: String {
+        guard let percent = reading.percent else { return "questionmark.circle" }
+        if reading.charge == .charging { return "battery.100.bolt" }
+        if percent >= 75 { return "battery.100" }
+        if percent >= 50 { return "battery.75" }
+        if percent >= 25 { return "battery.50" }
+        return percent >= 10 ? "battery.25" : "battery.0"
+    }
+
+    /// Amber and red are the two exceptions the palette keeps, and a low battery earns one.
+    private var level: Color {
+        guard let percent = reading.percent else { return HUD.dim }
+        if reading.charge == .charging || reading.charge == .full { return HUD.bright }
+        if percent <= 10 { return HUD.alert }
+        return percent <= 20 ? HUD.amber : HUD.accent
     }
 }
 
