@@ -1167,12 +1167,26 @@ final class AppModel: ObservableObject {
         case .localMobile(let capability), .directDevice(let capability):
             return await carryOut(capability, request: request, spoken: spoken)
 
+        // The cloud lane - programme §3 and §12. A general question with the PC off still has an
+        // answer, and the answer is still JARVIS's: the provider is an executor, not a second
+        // assistant, so the turn is filed into the same conversation with the provider named as
+        // what carried it out.
         case .cloud:
             thinking = true
-            let said = await CloudIntelligence.shared.ask(request)
+
+            let context = CloudContext.lines(for: request, from: CloudContext.Known(
+                turns: recentTurns,
+                place: PlaceResolution.read(
+                    whereabouts.fix, in: MobilePlaceBook.shared.places).place?.spoken,
+                pcAnswering: link.isOnline,
+                pcName: pcName,
+                routine: MobileRoutineBook.shared.routines.first.map(PlaceAnswers.describe)))
+
+            let said = await CloudIntelligence.shared.ask(request, context: context)
             thinking = false
+
             answer(said, spoken: spoken)
-            fileTurn(request, said)
+            fileTurn(request, said, executor: CloudIntelligence.shared.credential?.kind.rawValue)
             return true
 
         case .pcPrime:
@@ -1385,13 +1399,34 @@ final class AppModel: ObservableObject {
     /// Programme §17 and §18: "give me three ideas" asked here and "let us use the second one"
     /// asked at the desk are one conversation, and the only way the desk can know that is if the
     /// turn travelled. Urgent by category, because the next turn may arrive at the other node.
-    private func fileTurn(_ request: String, _ said: String) {
+    /// Files one turn into the shared conversation.
+    ///
+    /// `executor` names what actually carried the turn out when that is not this phone - a cloud
+    /// provider, today. It is recorded rather than hidden because the PC's view of the
+    /// conversation should say how each answer was reached, and because "which of these did a
+    /// third party see" is a question the owner is entitled to be able to ask. The conversation and
+    /// the response owner do not change: a provider is an executor, not another JARVIS.
+    private func fileTurn(_ request: String, _ said: String, executor: String? = nil) {
+        var payload = ["said": request, "answered": said, "conversation": conversationId]
+
+        if let executor, !executor.isEmpty { payload["executor"] = executor }
+
+        // Kept here as well, so a follow-up asked a moment later has its thread even with nothing
+        // connected. Bounded, because this is context and not a transcript.
+        turns.append((said: request, answered: said))
+        if turns.count > 8 { turns.removeFirst(turns.count - 8) }
+
         observe(
             OwnerEventTypes.asked,
             .conversation,
-            payload: ["said": request, "answered": said, "conversation": conversationId],
+            payload: payload,
             key: "\(request)|\(Int(Date().timeIntervalSince1970))")
     }
+
+    /// This conversation's recent exchanges, for context that needs a thread.
+    private var turns: [(said: String, answered: String)] = []
+
+    var recentTurns: [(said: String, answered: String)] { turns }
 
     /// This phone's conversation, for a turn to belong to.
     ///
