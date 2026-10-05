@@ -5,9 +5,15 @@ import UIKit
 /// The PC's pre-login service: the same machine, a different door.
 ///
 /// Desktop JARVIS only exists once somebody has signed in. The service runs from boot, as
-/// LocalSystem, and answers three read-only things - what the machine is, what its session is
-/// doing, and whether the desktop is up. It is what makes "is my PC on, or just locked?" a question
-/// this phone can answer instead of guessing from a connection that did not come up.
+/// LocalSystem, and answers a short closed list: what the machine is, what its session is doing,
+/// whether the desktop is up - and, since the unlock work, `unlock.challenge` and
+/// `unlock.authorize`. It is what makes "is my PC on, or just locked?" a question this phone can
+/// answer instead of guessing from a connection that did not come up.
+///
+/// The first three read; they change nothing and need no approval. `unlock.authorize` is the only
+/// thing this phone may ask the service to change about the machine, and it is the most heavily
+/// checked request in either program: a Face ID signature over a challenge naming this machine,
+/// this account, this action and this connection, usable once.
 ///
 /// It is a second pairing, not a second PC. The keys are different on purpose: the PC's desktop key
 /// is sealed to the owner's Windows account, and a service running before anybody has signed in
@@ -97,11 +103,14 @@ struct PairedService: Codable, Equatable {
 
 /// Asking the machine what it is doing when JARVIS itself cannot be asked.
 ///
-/// **It connects, asks, and hangs up.** The service answers three read-only things and is asked
-/// rarely - when the desktop did not come up, and when somebody is looking at the Home panel - so a
-/// held-open connection would buy nothing and leave a standing door into a machine that nobody is
-/// signed in to. The desktop's connection is the one worth keeping alive, because it carries
-/// conversation; this one carries a sentence.
+/// **It connects, asks, and hangs up.** Status is asked rarely - when the desktop did not come up,
+/// and when somebody is looking at the Home panel - so a held-open connection would buy nothing and
+/// leave a standing door into a machine that nobody is signed in to. The desktop's connection is
+/// the one worth keeping alive, because it carries conversation; this one carries a sentence.
+///
+/// An unlock is the exception, and `unlock(...)` says why: challenge and authorization are one
+/// operation in two requests, the challenge lives thirty seconds, and a second handshake in the
+/// middle of it would spend that budget on reconnecting rather than on the owner's face.
 ///
 /// **It never speaks first.** Pushes are ignored: there is nothing the pre-login service is allowed
 /// to ask this phone to do, and treating anything it sent as an instruction would be the beginning
