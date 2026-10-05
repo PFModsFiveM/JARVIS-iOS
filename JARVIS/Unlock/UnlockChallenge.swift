@@ -36,7 +36,7 @@ struct UnlockChallenge: Equatable {
     /// Each case names the thing that was wrong rather than saying the reply was bad, because
     /// these are the only evidence anybody gets when an unlock will not start, and "malformed"
     /// sends somebody to read a packet capture.
-    enum Fault: Equatable {
+    enum Fault: Equatable, Error {
         /// Not a challenge at all - the PC refused, or answered something else entirely.
         case notAChallenge(String)
 
