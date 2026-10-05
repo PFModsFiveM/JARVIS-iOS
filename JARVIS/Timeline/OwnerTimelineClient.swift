@@ -22,8 +22,23 @@ struct OwnerEvent: Codable, Equatable, Identifiable {
     let sensitivity: String
     let schema: Int
 
+    /// Which clock this phone was on when it observed this.
+    ///
+    /// The PC learns times of day from these events - when the owner leaves, when they get home -
+    /// and a time of day is a statement about a wall clock, not about an instant. Sending the
+    /// instant alone made every learned time wrong by the owner's summer offset, because
+    /// `ISO8601DateFormatter` defaults to GMT and so every arrival this phone has ever filed
+    /// arrived stamped as if the owner lived in UTC.
+    let zone: String
+
     /// The shape this build writes. Must match the PC's `OwnerTimeline.Schema`.
     static let currentSchema = 1
+
+    /// Spelled out rather than synthesised, because this type has a custom decoder and a reader
+    /// should not have to know which of the two Swift still generates.
+    enum CodingKeys: String, CodingKey {
+        case id, type, category, occurred, observed, payload, confidence, sensitivity, schema, zone
+    }
 
     init(
         id: String,
@@ -33,7 +48,8 @@ struct OwnerEvent: Codable, Equatable, Identifiable {
         observed: Date = Date(),
         payload: [String: String] = [:],
         confidence: Double = 1,
-        sensitivity: OwnerEventSensitivity = .medium
+        sensitivity: OwnerEventSensitivity = .medium,
+        zone: String = TimeZone.current.identifier
     ) {
         self.id = id
         self.type = type
@@ -43,6 +59,7 @@ struct OwnerEvent: Codable, Equatable, Identifiable {
         self.payload = payload
         self.confidence = confidence
         self.sensitivity = sensitivity.rawValue
+        self.zone = zone
         schema = Self.currentSchema
     }
 
@@ -57,7 +74,8 @@ struct OwnerEvent: Codable, Equatable, Identifiable {
             "payload": payload,
             "confidence": confidence,
             "sensitivity": sensitivity,
-            "schema": schema
+            "schema": schema,
+            "zone": zone
         ]
     }
 
@@ -78,6 +96,32 @@ struct OwnerEvent: Codable, Equatable, Identifiable {
         confidence = (row["confidence"] as? NSNumber)?.doubleValue ?? 1
         sensitivity = row["sensitivity"] as? String ?? OwnerEventSensitivity.medium.rawValue
         schema = (row["schema"] as? NSNumber)?.intValue ?? OwnerEvent.currentSchema
+
+        // Empty when the sender did not say, which the PC reads as the owner's own clock. Never
+        // this phone's zone: an event the PC observed was not observed here.
+        zone = row["zone"] as? String ?? ""
+    }
+
+    /// Reads a stored event, tolerating one written before events said which clock they were on.
+    ///
+    /// Without this, adding `zone` to a stored shape would make every queued event undecodable and
+    /// the whole offline queue would be dropped on the first launch after an update - losing
+    /// exactly the observations the owner was away for, which are the ones the queue exists to
+    /// keep. An old row decodes with an empty zone, and the PC reads an empty zone as home.
+    init(from decoder: Decoder) throws {
+        let row = try decoder.container(keyedBy: CodingKeys.self)
+
+        id = try row.decode(String.self, forKey: .id)
+        type = try row.decode(String.self, forKey: .type)
+        category = try row.decode(String.self, forKey: .category)
+        occurred = try row.decode(Date.self, forKey: .occurred)
+        observed = try row.decode(Date.self, forKey: .observed)
+        payload = try row.decodeIfPresent([String: String].self, forKey: .payload) ?? [:]
+        confidence = try row.decodeIfPresent(Double.self, forKey: .confidence) ?? 1
+        sensitivity = try row.decodeIfPresent(String.self, forKey: .sensitivity)
+            ?? OwnerEventSensitivity.medium.rawValue
+        schema = try row.decodeIfPresent(Int.self, forKey: .schema) ?? OwnerEvent.currentSchema
+        zone = try row.decodeIfPresent(String.self, forKey: .zone) ?? ""
     }
 
     var sensitive: Bool {
@@ -90,11 +134,20 @@ struct OwnerEvent: Codable, Equatable, Identifiable {
     /// Which node observed it, when the PC said. Empty for this phone's own.
     var node: String { payload["node"] ?? "" }
 
-    private static let formatter: ISO8601DateFormatter = {
+    /// The stamp this phone writes.
+    ///
+    /// `ISO8601DateFormatter` defaults to GMT, and `.withInternetDateTime` then writes a `Z`. The
+    /// instant was always right and the offset was always a lie: an arrival at ten past six on a
+    /// July evening went out as `17:10Z`, and the PC - which learns a time of day from exactly
+    /// these events - read it as ten past five. Setting the zone makes it `18:10+01:00`, which is
+    /// the same instant and now says which clock it was. Not computed once and cached: a phone
+    /// crosses into another zone mid-flight, and the whole point is to say where it actually was.
+    private static var formatter: ISO8601DateFormatter {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        formatter.timeZone = .current
         return formatter
-    }()
+    }
 
     static func stamp(_ date: Date) -> String { formatter.string(from: date) }
 
