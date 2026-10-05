@@ -1146,7 +1146,25 @@ final class AppModel: ObservableObject {
         // The chosen lane did not work. This is almost always the PC: chosen because the bridge was
         // up a moment ago, gone by the time the request left. Before this, that came back to the
         // owner as a transport error for a light the phone could have switched itself.
-        if let fallback = decision.fallback, await follow(fallback, request: request, spoken: spoken) { return }
+        //
+        // But a failed PC request is not always a request that did not happen - programme §7B. If
+        // the PC received "switch the lamp" and only the reply was lost, sending the same thing
+        // down the direct route presses the rocker a second time and the owner gets the light back
+        // where it started. On and off survive being repeated; a toggle and a press do not.
+        if let fallback = decision.fallback {
+            if MobileCapabilities.mayFallBack(to: fallback, after: lastDelivery) {
+                if await follow(fallback, request: request, spoken: spoken) { return }
+            } else {
+                let name = fallback.capability?.target
+                    .flatMap { id in SmartHomeModel.shared.standby.first { $0.id == id }?.name }
+                    ?? "it"
+
+                let said = MobileCapabilities.mayHaveHappened(name)
+                answer(said, spoken: spoken)
+                fileTurn(request, said)
+                return
+            }
+        }
 
         // Every lane failed, and the last one had the words for it.
         let said = MobileCapabilities.waiting(nodeState)
@@ -1341,16 +1359,32 @@ final class AppModel: ObservableObject {
     }
 
     /// The PC's lane. False when the PC could not be reached at all, so a fallback may try.
+    /// Whether the last request to the PC certainly did not leave, or might have - programme §7B.
+    ///
+    /// Set by `askThePC` and read by the fallback. A field rather than a return value because
+    /// `follow` answers one question - did this lane do it - and widening that for one caller
+    /// would make every other lane carry a concept that is only about this one.
+    private var lastDelivery: MobileCapabilities.Delivery = .neverSent
+
     private func askThePC(_ request: String, spoken: Bool) async -> Bool {
         thinking = true
         defer { thinking = false }
+
+        // Nothing has left yet, so nothing can have happened at the other end.
+        lastDelivery = .neverSent
 
         // A new question makes whatever was still coming for the last one stale.
         cancelVoiceWait()
         voice.stop()
 
         do {
-            let reply = try await session().request("ask", ["text": request], timeout: 90)
+            let client = try await session()
+
+            // The session is open, so from here on a failure could be a reply lost on the way back
+            // rather than a request that never went.
+            lastDelivery = .unknown
+
+            let reply = try await client.request("ask", ["text": request], timeout: 90)
             let said = reply.kind == "answer" ? (reply.text("text") ?? "") : reply.message
             lines.append(ChatLine(speaker: reply.kind == "answer" ? .jarvis : .system, text: said))
             LiveActivity.shared.answer = said

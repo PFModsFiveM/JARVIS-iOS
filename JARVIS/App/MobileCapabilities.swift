@@ -293,6 +293,59 @@ enum MobileCapabilities {
         return MobileDecision(.unavailable(waiting(state)))
     }
 
+    /// Whether a request to the PC certainly did not happen, or merely might not have.
+    ///
+    /// The distinction the fallback turns on - programme §7B. A connection that was never
+    /// established is a request that never left; a reply that timed out after the request went is
+    /// a request that may well have been carried out, with only the answer lost on the way back.
+    enum Delivery: Equatable {
+        /// There was no route at all. Nothing happened at the other end.
+        case neverSent
+
+        /// It left, and what became of it is unknown.
+        case unknown
+    }
+
+    /// Whether the fallback lane may be tried after the PC lane failed - programme §7B.
+    ///
+    /// **A toggle is not a retry.** If the PC may have received "switch the lamp" and only the
+    /// reply was lost, sending the same thing down the direct route presses a physical rocker a
+    /// second time - and the owner, who asked for one thing, gets the light back where it started
+    /// and no idea why. An explicit ON or OFF is safe to repeat, because arriving twice at "on" is
+    /// still on. That asymmetry is the whole rule, and it is the same one the PC's own provider
+    /// applies when a vendor request goes ambiguous.
+    ///
+    /// Everything that is not a device command may always be retried: a question asked twice is a
+    /// question answered twice, which costs a moment and changes nothing.
+    static func mayFallBack(to lane: MobileLane, after delivery: Delivery) -> Bool {
+        if delivery == .neverSent { return true }
+
+        guard let capability = lane.capability, capability.isADeviceCommand else { return true }
+
+        switch capability {
+        case .device(_, let command):
+            // On and off are idempotent; a press is not, and SwitchBot has no toggle - so a
+            // device that prefers a press is exactly the case this exists for.
+            return command == .on || command == .off
+
+        case .deviceToggle:
+            // A toggle is never idempotent, by definition.
+            return false
+
+        default:
+            return true
+        }
+    }
+
+    /// What to say when a fallback was refused rather than tried.
+    ///
+    /// Honest about the uncertainty rather than claiming either outcome. The owner can look, which
+    /// is cheaper than JARVIS guessing and being wrong in the direction that undoes their request.
+    static func mayHaveHappened(_ name: String) -> String {
+        "I sent that to your PC and didn't hear back, sir. It may have gone through - "
+        + "I won't send it again, in case \(name) ends up back where it started."
+    }
+
     /// What to say when the request belongs to a PC that is not answering.
     ///
     /// Never "done", never a transport error, and never a guess at the answer the PC would have
