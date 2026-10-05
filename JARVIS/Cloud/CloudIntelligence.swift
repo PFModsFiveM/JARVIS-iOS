@@ -219,6 +219,7 @@ final class CloudIntelligence: ObservableObject {
         stored.save()
         credential = stored
         problem = nil
+        CloudStatus.shared.configured(true)
     }
 
     func forget() {
@@ -226,14 +227,25 @@ final class CloudIntelligence: ObservableObject {
         credential = nil
         problem = nil
         lastAnswerAt = nil
+        CloudStatus.shared.configured(false)
     }
 
     /// Asks the provider, and reports a failure as words rather than as an error the owner reads raw.
-    func ask(_ question: String, context: [String] = [], timeout: TimeInterval = 45) async -> String {
+    func ask(
+        _ question: String,
+        context: [String] = [],
+        timeout: TimeInterval = CloudStatus.timeout,
+        status: CloudStatus? = nil
+    ) async -> String {
+        let watching = status ?? CloudStatus.shared
+
         guard let credential else {
+            watching.failed(.notConfigured)
             problem = CloudProblem.notConfigured.errorDescription
             return problem ?? ""
         }
+
+        watching.configured(true)
 
         let provider = answering?(credential) ?? AnthropicAnswering(credential: credential)
 
@@ -241,12 +253,29 @@ final class CloudIntelligence: ObservableObject {
             let answer = try await provider.answer(question, context: context, timeout: timeout)
             problem = nil
             lastAnswerAt = Date()
+            watching.worked()
             return answer
         } catch let trouble as CloudProblem {
             problem = trouble.errorDescription
+            watching.failed(trouble)
+            return problem ?? ""
+        } catch is CancellationError {
+            // The owner stopped it - priority §8B. Not a failure of the lane, and recording it as
+            // one would label a working provider broken because somebody changed their mind.
+            watching.stopped()
+            problem = nil
+            return ""
+        } catch let trouble as URLError where trouble.code == .cancelled {
+            watching.stopped()
+            problem = nil
+            return ""
+        } catch let trouble as URLError where trouble.code == .timedOut {
+            watching.ranOut()
+            problem = watching.lastProblem
             return problem ?? ""
         } catch {
             problem = CloudProblem.unreachable.errorDescription
+            watching.failed(.unreachable)
             return problem ?? ""
         }
     }

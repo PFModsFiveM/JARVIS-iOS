@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 import Network
 import SwiftUI
+import UserNotifications
 import UIKit
 
 struct ChatLine: Identifiable, Equatable {
@@ -1314,8 +1315,19 @@ final class AppModel: ObservableObject {
                 pcName: pcName,
                 routine: MobileRoutineBook.shared.routines.first.map(PlaceAnswers.describe)))
 
-            let said = await CloudIntelligence.shared.ask(request, context: context)
+            // Held so the owner can stop it - priority §8B. A cloud question is the one thing this
+            // phone does that can take twenty-five seconds with nothing to show, and a spinner
+            // with no way out is how an app earns being force-quit.
+            let question = Task { await CloudIntelligence.shared.ask(request, context: context) }
+            cloudQuestion = question
+
+            let said = await question.value
+            cloudQuestion = nil
             thinking = false
+
+            // Cancelled: the owner has already seen it stop, and answering with an empty line
+            // would put a blank turn into a conversation the PC also reads.
+            if said.isEmpty, question.isCancelled { return true }
 
             answer(said, spoken: spoken)
             fileTurn(request, said, executor: CloudIntelligence.shared.credential?.kind.rawValue)
@@ -1541,6 +1553,98 @@ final class AppModel: ObservableObject {
 
     /// The last route taken, for the settings page to show rather than for a log.
     @Published private(set) var lastVoiceRoute: VoiceRoute?
+
+    /// The last phrase this PC rendered in JARVIS's voice, for the voice diagnostic - §9C.
+    @Published private(set) var lastRenderedPhrase: String?
+
+    /// What iOS says about notifications, read when the permission page asks - §20.
+    @Published var notificationStatus: UNAuthorizationStatus = .notDetermined
+
+    /// Whether the local network has been allowed. Nil until something has tried to use it.
+    ///
+    /// iOS gives no API for this, deliberately: there is no status to read, only the observable
+    /// fact that a connection on the local network either worked or did not. So this is set by
+    /// the bridge actually reaching the PC over a local address, which is the only honest source -
+    /// and nil rather than false until then, because "not tried" and "refused" are different.
+    @Published var localNetworkAllowed: Bool?
+
+    /// Whether the microphone has been allowed, as iOS has it.
+    @Published var microphoneAllowed = false
+
+    /// The cloud question in flight, so the owner can stop it - priority §8B.
+    private var cloudQuestion: Task<String, Never>?
+
+    /// Whether there is something to stop, for the button to appear at all.
+    var canStopThinking: Bool { cloudQuestion != nil }
+
+    /// Stops the cloud question the owner is tired of waiting for - priority §8B.
+    ///
+    /// Recorded as a cancellation rather than a failure: the lane did nothing wrong, and marking a
+    /// working provider broken because somebody changed their mind would then tell them to go and
+    /// check a key that is fine.
+    func stopThinking() {
+        guard let question = cloudQuestion else { return }
+
+        question.cancel()
+        cloudQuestion = nil
+        thinking = false
+        CloudStatus.shared.stopped()
+    }
+
+    /// Reads what iOS currently says about the permissions JARVIS uses - priority §20.
+    ///
+    /// Asked for rather than remembered, every time the page opens: the owner changes something in
+    /// Settings, iOS knows, and an app showing what it remembered is the exact failure the brief's
+    /// "use OS truth" is about.
+    func readPermissions() async {
+        notificationStatus = await UNUserNotificationCenter.current()
+            .notificationSettings().authorizationStatus
+
+        microphoneAllowed = AVAudioApplication.shared.recordPermission == .granted
+
+        CloudStatus.shared.configured(CloudIntelligence.shared.isConfigured)
+    }
+
+    /// Notes that something on the local network either worked or did not - priority §20.
+    ///
+    /// iOS gives no status to read for this, so the only honest source is an attempt. Called by
+    /// the bridge when it reaches the PC on a local address, and when it cannot.
+    func localNetwork(reached: Bool) {
+        // A granted permission is sticky, because that is what it is: once the owner has allowed
+        // the local network, a later connection that fails is a network problem and not a refusal,
+        // and reporting it as one would send them to Settings to fix nothing.
+        if reached || localNetworkAllowed == nil { localNetworkAllowed = reached }
+    }
+
+    /// Why each rung of the voice ladder is or is not available - priority §9C.
+    ///
+    /// Assembled here rather than held, because every part of it belongs to something else: the
+    /// cache knows what it holds, the link knows whether the PC is reachable, and the model
+    /// transfer knows what arrived. A stored copy would be a fourth thing to keep in step.
+    var voiceDiagnosis: VoiceDiagnosis {
+        let transfer = VoiceModelStore.shared
+
+        return VoiceDiagnosis(
+            modelPresent: transfer.modelPresent,
+            configPresent: transfer.configPresent,
+            checksumValid: transfer.checksumValid,
+
+            // Always false, and honestly so: Piper is C++ around onnxruntime and espeak-ng, and
+            // neither is compiled into this app. The model transfers and nothing can speak it.
+            runtimeAvailable: false,
+            cachedPhrases: VoiceCache.shared.held,
+            cachedBytes: VoiceCache.shared.bytes,
+            lastRendered: lastRenderedPhrase,
+            systemVoiceAllowed: systemVoiceAllowed,
+            route: MobileVoiceRouter.route(
+                "a phrase nothing has cached",
+                able: MobileVoiceRouter.Able(
+                    cached: nil,
+                    onDevice: false,
+                    pcAnswering: link.isOnline,
+                    systemVoiceAllowed: systemVoiceAllowed,
+                    speaking: true)))
+    }
 
     /// Speaks one sentence by the best route available - programme §4A.
     func speak(_ text: String) {
@@ -1817,6 +1921,7 @@ final class AppModel: ObservableObject {
         // with the PC asleep - programme §4C. Keyed on the words and the voice together, so
         // changing the voice orphans the old audio rather than serving it.
         VoiceCache.shared.keep(wait.text, wav: wav, mouth: entry.mouth)
+        lastRenderedPhrase = wait.text
 
         if !voice.play(wav: wav, mouth: entry.mouth), systemVoiceAllowed { voice.say(wait.text) }
     }

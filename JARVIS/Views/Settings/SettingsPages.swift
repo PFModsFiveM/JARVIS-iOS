@@ -1,5 +1,7 @@
+import CoreLocation
 import SwiftUI
 import UIKit
+import UserNotifications
 
 /// The page behind one row of Settings.
 ///
@@ -22,6 +24,9 @@ struct SettingsPage: View {
             case .knownPlaces: KnownPlacesPage()
             case .notices: NoticeCategoriesPage()
             case .vocabulary: VocabularyPage()
+            case .permissions: PermissionsPage()
+            case .voiceLadder: VoiceLadderPage()
+            case .cloudLane: CloudLanePage()
             case .waking: WakingPage()
             case .reaching: ReachingPage()
             case .smartHome: SmartHomePage()
@@ -1367,5 +1372,254 @@ private struct VocabularyPage: View {
         return alias.trusted
             ? "\(how), \(times). I act on this."
             : "\(how), \(times). Not enough for me to act on yet."
+    }
+}
+
+/// Every permission JARVIS uses, as iOS currently has it - priority §20.
+///
+/// Read from iOS on every appearance rather than remembered, because an app's own idea of its
+/// permissions drifts: the owner changes something in Settings, iOS knows, and the app shows what
+/// it recorded. Nothing here flips a switch - iOS owns these - so the page says what is true and
+/// where to change it.
+private struct PermissionsPage: View {
+    @EnvironmentObject var model: AppModel
+    @ObservedObject private var cloud = CloudStatus.shared
+
+    @State private var permissions: [OwnerPermission] = []
+
+    var body: some View {
+        List {
+            Section {
+                SettingsNote(
+                    "This is what iOS says, not what JARVIS remembers asking for. If something "
+                    + "here says it needs iOS Settings, that is because iOS only ever asks once.")
+            }
+
+            ForEach(permissions) { permission in
+                Section {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(permission.title)
+                            Spacer()
+                            Text(permission.said)
+                                .font(.caption)
+                                .foregroundStyle(permission.state.allowed ? .secondary : .primary)
+                        }
+
+                        Text(permission.why)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        if permission.needsSettings {
+                            Button("Open iOS Settings") {
+                                if let url = URL(string: UIApplication.openSettingsURLString) {
+                                    UIApplication.shared.open(url)
+                                }
+                            }
+                            .font(.caption)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("What iOS lets me do")
+        .task { await reread() }
+        .refreshable { await reread() }
+    }
+
+    /// Asks iOS, then shows what it said.
+    ///
+    /// In that order, and asked every time the page opens: the owner changes something in Settings,
+    /// iOS knows, and an app showing what it remembered is the exact failure "use OS truth" is
+    /// about.
+    private func reread() async {
+        await model.readPermissions()
+        permissions = read()
+    }
+
+    private func read() -> [OwnerPermission] {
+        PermissionCentre.all(
+            location: CLLocationManager().authorizationStatus,
+            notifications: model.notificationStatus,
+            localNetwork: model.localNetworkAllowed,
+            cloud: cloud.readiness,
+            microphone: model.microphoneAllowed)
+    }
+}
+
+/// Which voice JARVIS will use next, and what is missing from the ones above it - §9C.
+///
+/// "It's using the wrong voice" is a complaint; "the model is here and nothing in this app can run
+/// it yet" is an explanation. This page is the difference.
+private struct VoiceLadderPage: View {
+    @EnvironmentObject var model: AppModel
+    @ObservedObject private var cache = VoiceCache.shared
+
+    var body: some View {
+        let diagnosis = model.voiceDiagnosis
+
+        List {
+            Section {
+                SettingsNote(diagnosis.summary)
+            } header: {
+                HUDSectionTitle(text: "Next time I speak")
+            }
+
+            Section {
+                ForEach(Array(diagnosis.rungs.enumerated()), id: \.offset) { _, rung in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text(rung.rung)
+                            Spacer()
+                            Text(rung.available ? "available" : "not available")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Text(rung.because)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } header: {
+                HUDSectionTitle(text: "The ladder, best first")
+            } footer: {
+                SettingsNote(
+                    "I work down this list. The phone's own voice is last and off by default, "
+                    + "because a generic voice standing in for mine is a different assistant.")
+            }
+
+            if let blocker = diagnosis.ownVoiceBlocker {
+                Section {
+                    SettingsNote(blocker)
+                } header: {
+                    HUDSectionTitle(text: "Why not my own voice here")
+                }
+            }
+
+            if let last = diagnosis.lastRendered {
+                Section {
+                    Text("\u{201C}\(last)\u{201D}")
+                        .font(.caption)
+                } header: {
+                    HUDSectionTitle(text: "Last phrase your PC rendered")
+                }
+            }
+        }
+        .navigationTitle("Why I sound like this")
+    }
+}
+
+/// Where the cloud lane stands, in six states rather than one - priority §8A and §8B.
+///
+/// The reason not to collapse these into "cloud unavailable" is that each has a different thing the
+/// owner would do about it. No key means add one; a refused key means check it; rate-limited means
+/// wait; no route out means wait differently. A single label would send them to the wrong one.
+private struct CloudLanePage: View {
+    @EnvironmentObject var model: AppModel
+    @ObservedObject private var cloud = CloudStatus.shared
+    @ObservedObject private var intelligence = CloudIntelligence.shared
+
+    @State private var key = ""
+    @State private var chosenModel = ""
+    @State private var saved = false
+
+    var body: some View {
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(cloud.readiness.title)
+                    Text(cloud.readiness.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if let problem = cloud.lastProblem {
+                        Text(problem)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } header: {
+                Text("Where it stands")
+            }
+
+            if model.canStopThinking {
+                Section {
+                    Button("Stop waiting for an answer", role: .destructive) { model.stopThinking() }
+                } footer: {
+                    Text("You can always stop a cloud question. Nothing is kept from one you stop.")
+                }
+            }
+
+            Section {
+                row("Answered", "\(cloud.answered)")
+                row("Gave up waiting", "\(cloud.timedOut)")
+                row("You stopped", "\(cloud.cancelled)")
+
+                if let answer = cloud.lastAnswer {
+                    row("Last answer", answer.formatted(date: .omitted, time: .shortened))
+                }
+            } header: {
+                Text("Since the app started")
+            } footer: {
+                Text("A question takes at most \(Int(CloudStatus.timeout)) seconds before I give up "
+                     + "on it and tell you so.")
+            }
+
+            Section {
+                if intelligence.isConfigured {
+                    row("Provider", intelligence.credential?.kind.display ?? "")
+                    row("Model", intelligence.credential?.model.isEmpty == false
+                        ? intelligence.credential!.model
+                        : "This phone's default")
+
+                    Button("Forget the key", role: .destructive) {
+                        intelligence.forget()
+                        key = ""
+                        chosenModel = ""
+                    }
+                } else {
+                    SecureField("Your own provider key", text: $key)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+
+                    TextField("Model, or blank for the default", text: $chosenModel)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+
+                    Button("Save it") {
+                        intelligence.remember(kind: .anthropic, key: key, model: chosenModel)
+                        key = ""
+                        saved = intelligence.isConfigured
+                    }
+                    .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            } header: {
+                Text("The key")
+            } footer: {
+                // Said rather than implied, because an owner typing a provider key into a phone is
+                // entitled to know exactly where it goes and what it is used for.
+                Text("It lives in this phone's Keychain and is never shown again, never written to "
+                     + "a log, and never sent to your PC. Nothing about your home, your location "
+                     + "or your files goes to the provider - only the question and a few lines of "
+                     + "conversation. Get one at \(CloudProviderKind.anthropic.where_).")
+            }
+
+            if saved {
+                Section {
+                    SettingsNote("Saved. I haven't tried it yet - asking the provider to answer "
+                                 + "this screen would spend your quota on a label.")
+                }
+            }
+        }
+        .navigationTitle("Answering without your PC")
+    }
+
+    private func row(_ name: String, _ value: String) -> some View {
+        HStack {
+            Text(name)
+            Spacer()
+            Text(value).foregroundStyle(.secondary)
+        }
     }
 }

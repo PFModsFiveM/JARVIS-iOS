@@ -112,6 +112,16 @@ struct HomeView: View {
                         HStack(spacing: 8) {
                             ProgressView().tint(HUD.accent)
                             HUDLabel(text: "Working")
+
+                            // A cloud question can take twenty-five seconds with nothing to show,
+                            // and a spinner with no way out is how an app earns being force-quit -
+                            // priority §8B. Only shown when there is something to stop.
+                            if model.canStopThinking {
+                                Spacer()
+                                Button("Stop") { model.stopThinking() }
+                                    .font(.caption)
+                                    .foregroundStyle(HUD.accent)
+                            }
                         }
                         .id("thinking")
                     }

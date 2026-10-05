@@ -32,6 +32,9 @@ enum SettingsDestination: String, CaseIterable, Hashable, Codable {
     case knownPlaces = "places"
     case notices = "notices"
     case vocabulary = "vocabulary"
+    case permissions = "permissions"
+    case voiceLadder = "voice-ladder"
+    case cloudLane = "cloud-lane"
 
     // PC-PRIME
     case waking = "waking"
@@ -191,6 +194,32 @@ enum SettingsCatalogue {
                       category: .mobile,
                       keywords: ["alias", "aliases", "names", "vocabulary", "words", "correction",
                                  "corrected", "bedroom lamp", "means", "rename"]),
+
+        SettingsEntry(destination: .permissions,
+                      title: "What iOS lets me do",
+                      subtitle: "Every permission JARVIS uses, as iOS currently has it.",
+                      symbol: "hand.raised",
+                      category: .mobile,
+                      keywords: ["permission", "permissions", "privacy", "location", "notifications",
+                                 "face id", "microphone", "local network", "allow", "denied",
+                                 "background location"]),
+
+        SettingsEntry(destination: .voiceLadder,
+                      title: "Why I sound like this",
+                      subtitle: "Which voice I'll use next, and what is missing from the ones above it.",
+                      symbol: "waveform",
+                      category: .mobile,
+                      keywords: ["voice", "speech", "speak", "piper", "model", "cache", "cached",
+                                 "siri voice", "system voice", "checksum", "runtime"]),
+
+        SettingsEntry(destination: .cloudLane,
+                      title: "Answering without your PC",
+                      subtitle: "Where the cloud lane stands, and your own provider key.",
+                      symbol: "cloud",
+                      category: .mobile,
+                      keywords: ["cloud", "anthropic", "claude", "api", "key", "provider", "token",
+                                 "rate limit", "offline", "general questions", "pc off", "quota",
+                                 "timeout", "cancel"]),
 
         // MARK: PC-Prime
         SettingsEntry(destination: .waking,
