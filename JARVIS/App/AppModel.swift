@@ -987,6 +987,19 @@ final class AppModel: ObservableObject {
     func pullPlaces() async {
         let book = MobilePlaceBook.shared
 
+        // Names the owner gave go first. They are the one thing here the PC does not already know
+        // and cannot work out, and a pull that overwrote the local row before the name was sent
+        // would quietly discard what the owner said.
+        for (id, name) in book.unsent {
+            do {
+                _ = try await exchanging("places.name", ["id": id, "name": name])
+                book.sent(id)
+            } catch {
+                // Kept, and tried again on the next connection.
+                book.failed(MobilePlaceBook.because(error))
+            }
+        }
+
         do {
             var more = true
             var moved = false
@@ -1257,6 +1270,31 @@ final class AppModel: ObservableObject {
 
             answer(said, spoken: spoken)
             fileTurn(request, said)
+            return true
+
+        // The owner naming where they are - programme §31. Their word is authoritative, so it
+        // takes effect here at once; the PC is told on the next connection rather than the owner
+        // being told to wait for one.
+        case .namePlace(let name):
+            let verdict = PlaceResolution.read(whereabouts.fix, in: MobilePlaceBook.shared.places)
+
+            guard let place = verdict.place else {
+                let said = PlaceAnswers.cannotName(verdict)
+                answer(said, spoken: spoken)
+                fileTurn(request, said)
+                return true
+            }
+
+            MobilePlaceBook.shared.rename(place.id, to: name)
+
+            let said = PlaceAnswers.named(name, waiting: !link.isOnline)
+            answer(said, spoken: spoken)
+            fileTurn(request, said)
+
+            // Best effort, now, so an owner at the desk sees it land immediately. If it fails the
+            // name is still held and still unsent, and the next connection carries it.
+            Task { await self.pullPlaces() }
+
             return true
         }
     }

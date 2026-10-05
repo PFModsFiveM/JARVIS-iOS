@@ -72,6 +72,14 @@ enum LocalCapability: Equatable {
     /// the subset this phone actually holds and says so when it does not.
     case whereabouts(asked: Whereabouts.Question, named: String?)
 
+    /// The owner naming where they are - "this is home", "call this place university".
+    ///
+    /// Local because the phone is the node that knows which place they are standing in. The name
+    /// takes effect here at once and the PC is told on the next connection, so saying it with the
+    /// desk asleep is not lost and needs no button - and the owner's word beats anything inferred,
+    /// here as on the PC.
+    case namePlace(name: String)
+
     /// Whether this phone answers this better than the PC would, so it should not be routed away.
     ///
     /// True for exactly one thing today, and the test is specific rather than general: the PC's
@@ -81,7 +89,7 @@ enum LocalCapability: Equatable {
     /// is genuinely better answered there.
     var answeredBestHere: Bool {
         switch self {
-        case .whereabouts: return true
+        case .whereabouts, .namePlace: return true
         default: return false
         }
     }
@@ -95,6 +103,7 @@ enum LocalCapability: Equatable {
         case .status: return "node.status"
         case .deviceToggle: return "devices.toggle"
         case .whereabouts: return "owner.whereabouts"
+        case .namePlace: return "owner.place.name"
         case .device(_, let command):
             switch command {
             case .on: return "devices.power.on"
@@ -111,7 +120,7 @@ enum LocalCapability: Equatable {
     var isADeviceCommand: Bool {
         switch self {
         case .device, .deviceToggle: return true
-        case .wake, .state, .power, .status, .whereabouts: return false
+        case .wake, .state, .power, .status, .whereabouts, .namePlace: return false
         }
     }
 
@@ -126,6 +135,7 @@ enum LocalCapability: Equatable {
         // not the same as naming nothing in particular - hence the nil rather than an empty
         // string, which is what every other case here means by nil too.
         case .whereabouts(_, let named): return named
+        case .namePlace(let name): return name
         }
     }
 
@@ -155,6 +165,7 @@ enum LocalCapability: Equatable {
         // a question about a place and not about a charge, and before the wake rules because
         // "am I home" carries neither a wake word nor a machine word and would fall through to
         // the PC - which is the one node that cannot answer it.
+        if let naming = aPlaceBeingNamed(words) { return naming }
         if let asking = aWhereaboutsQuestion(words, sentence) { return asking }
 
         // A battery, next. "Is my phone charging" carries both a machine word and a power word,
@@ -198,6 +209,32 @@ enum LocalCapability: Equatable {
     /// Narrow on purpose. A bare "status" or "report" is it, and so is asking whether everything is
     /// all right; naming a machine is not, because that is a question about the machine and the
     /// rule below answers it better. Anything else goes to the PC, where the understanding is.
+    /// The owner naming where they are, if that is what the sentence does.
+    ///
+    /// Narrow on purpose. "This is home" and "call this place the workshop" are unmistakable;
+    /// anything looser would catch "this is ridiculous" and quietly rename the owner's house.
+    private static func aPlaceBeingNamed(_ words: [String]) -> LocalCapability? {
+        // "This is <name>", where the sentence is about here rather than about anything else.
+        if words.count >= 3, words[0] == "this", words[1] == "is" {
+            let name = words.dropFirst(2).filter { !["the", "a", "my"].contains($0) }.joined(separator: " ")
+
+            return name.isEmpty ? nil : .namePlace(name: name)
+        }
+
+        // "Call this place <name>", "call this <name>".
+        if words.first == "call", words.contains("this") {
+            guard let marker = words.firstIndex(of: "this") else { return nil }
+
+            let rest = words[(marker + 1)...]
+                .filter { !["place", "the", "a", "my", "spot"].contains($0) }
+                .joined(separator: " ")
+
+            return rest.isEmpty ? nil : .namePlace(name: rest)
+        }
+
+        return nil
+    }
+
     /// Which question about whereabouts a sentence is asking, if it is asking one.
     ///
     /// Shaped as a ladder from most specific to least, because the phrases overlap: "when did I

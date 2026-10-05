@@ -19,6 +19,7 @@ struct SettingsPage: View {
             case .mobileCapabilities: MobileCapabilitiesPage()
             case .standbyLights: StandbyLightsPage()
             case .whereabouts: WhereaboutsPage()
+            case .knownPlaces: KnownPlacesPage()
             case .waking: WakingPage()
             case .reaching: ReachingPage()
             case .smartHome: SmartHomePage()
@@ -301,6 +302,166 @@ private struct WhereaboutsPage: View {
             }
         }
         .hudList()
+    }
+}
+
+/// The places this phone holds, what it currently makes of where it is, and the owner's own names.
+///
+/// This is the screen that makes the place model judgeable. A learned place is a claim about the
+/// owner's life, and the only check that matters is the owner reading it - so every row shows the
+/// evidence behind it: how many visits, whether they named it themselves, and the usual times if a
+/// routine has earned one.
+private struct KnownPlacesPage: View {
+    @EnvironmentObject var model: AppModel
+    @ObservedObject private var book = MobilePlaceBook.shared
+    @ObservedObject private var routines = MobileRoutineBook.shared
+
+    @State private var renaming: MobilePlace?
+    @State private var typed = ""
+    @State private var problem: String?
+
+    var body: some View {
+        List {
+            Section {
+                ValueRow(title: "Right now", value: PlaceAnswers.whereAmI(verdict))
+            } header: {
+                HUDSectionTitle(text: "Where you are")
+            } footer: {
+                SettingsNote(
+                    "Worked out on this phone, from the places below. It needs no connection to "
+                    + "your PC and no model.")
+            }
+
+            if book.places.isEmpty {
+                Section {
+                    SettingsNote(
+                        "Nothing yet. Your PC learns a place once you have stopped in it a few "
+                        + "times, and sends the useful ones here on the next connection.")
+                }
+            } else {
+                Section {
+                    ForEach(book.places) { place in
+                        Button {
+                            renaming = place
+                            typed = place.name
+                        } label: {
+                            PlaceRow(place: place, patterns: routines.about(place))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } header: {
+                    HUDSectionTitle(text: "\(book.places.count) place\(book.places.count == 1 ? "" : "s")")
+                } footer: {
+                    SettingsNote(
+                        "Tap a place to name it. What you type wins over anything JARVIS worked "
+                        + "out, on every node, and it is what you will hear said out loud.")
+                }
+            }
+
+            Section {
+                ValueRow(title: "Place revision", value: String(book.revision))
+                ValueRow(title: "Patterns held", value: String(routines.routines.count))
+
+                if let at = book.syncedAt {
+                    ValueRow(title: "Last caught up", value: at.formatted(date: .omitted, time: .shortened))
+                }
+
+                if let because = book.problem {
+                    ValueRow(title: "Last problem", value: because)
+                }
+            } header: {
+                HUDSectionTitle(text: "Catching up")
+            } footer: {
+                SettingsNote("Incremental, on every connection, with no button. Up to \(MobilePlaceProtocol.most) places are kept here.")
+            }
+        }
+        .hudList()
+        .alert("Name this place", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("Home", text: $typed)
+
+            Button("Save") { Task { await name() } }
+            Button("Cancel", role: .cancel) { renaming = nil }
+        } message: {
+            Text("What you call it. JARVIS will use this word, and so will your PC.")
+        }
+        .alert("That didn't work", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
+            Button("All right", role: .cancel) { problem = nil }
+        } message: {
+            Text(problem ?? "")
+        }
+    }
+
+    private var verdict: PlaceVerdict {
+        PlaceResolution.read(model.whereabouts.fix, in: book.places)
+    }
+
+    private func name() async {
+        guard let place = renaming else { return }
+
+        let said = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        renaming = nil
+
+        guard !said.isEmpty else { return }
+
+        do {
+            _ = try await model.exchanging("places.name", ["id": place.id, "name": said])
+
+            // Pulled back rather than patched locally, so the revision the PC assigned is the one
+            // this phone holds - otherwise the next incremental pull would send it again.
+            await model.pullPlaces()
+        } catch {
+            problem = MobilePlaceBook.because(error)
+        }
+    }
+}
+
+/// One place, with the evidence behind it rather than only its name.
+private struct PlaceRow: View {
+    let place: MobilePlace
+    let patterns: [MobileRoutine]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(place.name.isEmpty ? "Unnamed" : place.name)
+                    .font(.headline)
+
+                Spacer()
+
+                if place.named {
+                    Text("your name")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ForEach(patterns) { pattern in
+                Text(PlaceAnswers.describe(pattern))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// Never a coordinate. What the owner can judge the place by.
+    private var detail: String {
+        var parts: [String] = []
+
+        if !place.category.word.isEmpty { parts.append(place.category.word) }
+
+        parts.append("\(place.visits) visit\(place.visits == 1 ? "" : "s")")
+
+        if place.aliases.count > 0 { parts.append("also: \(place.aliases.joined(separator: ", "))") }
+
+        if let arrives = place.arrives {
+            parts.append("usually in around \(PlaceAnswers.clock(minutes: arrives))")
+        }
+
+        return parts.joined(separator: " · ")
     }
 }
 

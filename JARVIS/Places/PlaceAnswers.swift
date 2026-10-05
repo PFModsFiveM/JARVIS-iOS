@@ -279,6 +279,35 @@ enum PlaceAnswers {
         }
     }
 
+    // MARK: naming where you are
+
+    /// Confirming a name the owner just gave, and saying honestly whether the PC has it.
+    static func named(_ name: String, waiting: Bool) -> String {
+        waiting
+            ? "I'll call it \(name), sir. I'll tell your PC when it's next up."
+            : "I'll call it \(name), sir."
+    }
+
+    /// Why a name could not be attached to anywhere.
+    static func cannotName(_ verdict: PlaceVerdict) -> String {
+        switch verdict {
+        case .somewhereElse:
+            return "I can't name this spot yet, sir - your PC learns a place once you've stopped here a few times."
+
+        case .between:
+            return "I can't tell which of two places you're in, sir, so I'd be naming the wrong one."
+
+        case .tooVague(let accuracy):
+            return "I can only place you to about \(Int(accuracy)) metres, sir, which isn't precise enough to name."
+
+        case .noFix:
+            return "I can't tell where you are, sir - JARVIS hasn't been given location access."
+
+        case .at, .lastAt:
+            return "I'll see to it, sir."
+        }
+    }
+
     // MARK: wording
 
     static func clock(_ when: Date) -> String {

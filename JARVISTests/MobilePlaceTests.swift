@@ -554,3 +554,100 @@ final class MobilePlaceTests: XCTestCase {
 
     func testSentinel() {}
 }
+
+/// Naming where you are - programme §31.
+///
+/// The owner's word is authoritative, so it has to take effect without a PC and without a button,
+/// and the recogniser has to be narrow enough that "this is ridiculous" does not rename a house.
+final class PlaceNamingTests: XCTestCase {
+    private func named(_ sentence: String) -> String? {
+        guard case .namePlace(let name) = LocalCapability.of(sentence) else { return nil }
+
+        return name
+    }
+
+    func testTheWaysTheOwnerWouldSayItAreRecognised() {
+        XCTAssertEqual(named("this is home"), "home")
+        XCTAssertEqual(named("this is my house"), "house")
+        XCTAssertEqual(named("call this place university"), "university")
+        XCTAssertEqual(named("call this the workshop"), "workshop")
+    }
+
+    /// The reason the recogniser is narrow rather than clever.
+    func testAnOrdinaryRemarkDoesNotRenameAnywhere() {
+        XCTAssertNil(named("this is ridiculous"))
+        XCTAssertNil(named("call mum"))
+        XCTAssertNil(named("where am I"))
+        XCTAssertNil(named("this is"))
+    }
+
+    func testNamingIsNotTreatedAsADeviceCommand() {
+        guard case .namePlace = LocalCapability.of("this is home") else { return XCTFail("not recognised") }
+
+        XCTAssertFalse(LocalCapability.of("this is home")!.isADeviceCommand)
+        XCTAssertTrue(LocalCapability.of("this is home")!.answeredBestHere)
+    }
+
+    @MainActor
+    func testANameTakesEffectAtOnceAndIsRememberedAsUnsent() {
+        let book = MobilePlaceBook.shared
+        book.forget()
+        defer { book.forget() }
+
+        book.apply([[
+            "id": "A", "name": "", "named": "0", "revision": "4",
+            "lat": "53", "lon": "-7", "radius": "80", "visits": "6"
+        ]])
+
+        book.rename("A", to: "Home")
+
+        XCTAssertEqual(book.place("A")?.name, "Home")
+        XCTAssertEqual(book.place("A")?.named, true)
+        XCTAssertEqual(book.place("A")?.confidence, 1)
+        XCTAssertEqual(book.unsent["A"], "Home")
+
+        // The revision is untouched, so the PC's next word on this place still wins.
+        XCTAssertEqual(book.place("A")?.revision, 4)
+    }
+
+    @MainActor
+    func testSayingItTwiceLeavesOneInstruction() {
+        let book = MobilePlaceBook.shared
+        book.forget()
+        defer { book.forget() }
+
+        book.apply([["id": "A", "name": "", "named": "0", "revision": "1", "lat": "53", "lon": "-7"]])
+
+        book.rename("A", to: "Hom")
+        book.rename("A", to: "Home")
+
+        XCTAssertEqual(book.unsent.count, 1)
+        XCTAssertEqual(book.unsent["A"], "Home")
+    }
+
+    @MainActor
+    func testOnceSentItIsNoLongerPending() {
+        let book = MobilePlaceBook.shared
+        book.forget()
+        defer { book.forget() }
+
+        book.apply([["id": "A", "name": "", "named": "0", "revision": "1", "lat": "53", "lon": "-7"]])
+        book.rename("A", to: "Home")
+        book.sent("A")
+
+        XCTAssertTrue(book.unsent.isEmpty)
+    }
+
+    func testTheConfirmationSaysWhetherThePcHasItYet() {
+        XCTAssertTrue(PlaceAnswers.named("Home", waiting: true).contains("when it's next up"))
+        XCTAssertFalse(PlaceAnswers.named("Home", waiting: false).contains("next up"))
+    }
+
+    func testNamingNowhereExplainsRatherThanFailing() {
+        XCTAssertTrue(PlaceAnswers.cannotName(.somewhereElse).contains("stopped here a few times"))
+        XCTAssertTrue(PlaceAnswers.cannotName(.noFix).contains("location access"))
+        XCTAssertTrue(PlaceAnswers.cannotName(.tooVague(300)).contains("300 metres"))
+    }
+
+    func testSentinel() {}
+}

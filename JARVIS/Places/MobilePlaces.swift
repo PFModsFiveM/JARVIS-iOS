@@ -71,6 +71,44 @@ struct MobilePlace: Codable, Equatable, Identifiable {
         return visits == 1 ? "somewhere you have been once" : "somewhere you have been \(visits) times"
     }
 
+    /// The same place under a name the owner just gave it.
+    ///
+    /// Confidence becomes certainty and `named` becomes true, because that is what the owner
+    /// saying so means - and the revision is left alone, so the PC's next word on this place still
+    /// wins and this does not look like a row that came from the PC.
+    func renamed(_ said: String) -> MobilePlace {
+        MobilePlace(
+            id: id, name: said, aliases: aliases.filter { $0.caseInsensitiveCompare(said) != .orderedSame },
+            category: category, latitude: latitude, longitude: longitude, radius: radius,
+            confidence: 1, visits: visits, named: true, revision: revision,
+            firstSeen: firstSeen, lastSeen: lastSeen, updated: Date(), arrives: arrives, leaves: leaves)
+    }
+
+    /// The whole row, for the one place something other than the wire builds one.
+    init(
+        id: String, name: String, aliases: [String], category: MobilePlaceCategory,
+        latitude: Double, longitude: Double, radius: Double, confidence: Double,
+        visits: Int, named: Bool, revision: Int64,
+        firstSeen: Date, lastSeen: Date, updated: Date, arrives: Int?, leaves: Int?
+    ) {
+        self.id = id
+        self.name = name
+        self.aliases = aliases
+        self.category = category
+        self.latitude = latitude
+        self.longitude = longitude
+        self.radius = radius
+        self.confidence = confidence
+        self.visits = visits
+        self.named = named
+        self.revision = revision
+        self.firstSeen = firstSeen
+        self.lastSeen = lastSeen
+        self.updated = updated
+        self.arrives = arrives
+        self.leaves = leaves
+    }
+
     /// One row as the PC's `places.pull` sends it, or nil when it is not one.
     init?(_ row: [String: String]) {
         guard let id = row["id"], !id.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
@@ -215,6 +253,33 @@ final class MobilePlaceBook: ObservableObject {
         return changed
     }
 
+    /// Names the owner gave that the PC has not been told yet.
+    ///
+    /// The owner saying "this is home" with the desk asleep must not be lost and must not wait for
+    /// a button. The name takes effect here at once - they are the authority on what their own
+    /// house is called - and the push rides the next connection. Keyed by place so saying it twice
+    /// leaves one instruction rather than two.
+    @Published private(set) var unsent: [String: String] = [:]
+
+    /// Takes a name from the owner, here and now, and remembers to tell the PC.
+    func rename(_ id: String, to said: String) {
+        load()
+
+        let name = said.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !name.isEmpty, let index = places.firstIndex(where: { $0.id == id }) else { return }
+
+        places[index] = places[index].renamed(name)
+        unsent[id] = name
+        save()
+    }
+
+    /// Forgets a pending name, once the PC has it.
+    func sent(_ id: String) {
+        unsent.removeValue(forKey: id)
+        save()
+    }
+
     /// Records that a pull did not work, without moving the cursor.
     func failed(_ because: String) {
         problem = because
@@ -233,6 +298,7 @@ final class MobilePlaceBook: ObservableObject {
         revision = 0
         syncedAt = nil
         problem = nil
+        unsent = [:]
         save()
     }
 
@@ -263,6 +329,9 @@ final class MobilePlaceBook: ObservableObject {
         var revision: Int64
         var places: [MobilePlace]
         var syncedAt: Date?
+
+        /// Optional, so a file written before names could be pending still decodes.
+        var unsent: [String: String]?
     }
 
     private static var file: URL {
@@ -288,11 +357,13 @@ final class MobilePlaceBook: ObservableObject {
         places = stored.places
         revision = stored.revision
         syncedAt = stored.syncedAt
+        unsent = stored.unsent ?? [:]
     }
 
     private func save() {
         let stored = Stored(
-            schema: MobilePlaceProtocol.schema, revision: revision, places: places, syncedAt: syncedAt)
+            schema: MobilePlaceProtocol.schema, revision: revision, places: places,
+            syncedAt: syncedAt, unsent: unsent)
 
         guard let data = try? JSONEncoder().encode(stored) else { return }
 

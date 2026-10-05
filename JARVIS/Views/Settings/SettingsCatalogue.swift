@@ -29,6 +29,7 @@ enum SettingsDestination: String, CaseIterable, Hashable, Codable {
     case mobileCapabilities = "mobile"
     case standbyLights = "standby-lights"
     case whereabouts = "whereabouts"
+    case knownPlaces = "places"
 
     // PC-PRIME
     case waking = "waking"
@@ -164,6 +165,14 @@ enum SettingsCatalogue {
                       symbol: "location",
                       category: .mobile,
                       keywords: ["location", "gps", "home", "away", "geofence", "whereabouts", "presence"]),
+
+        SettingsEntry(destination: .knownPlaces,
+                      title: "Known places",
+                      subtitle: "The places your PC has learned, as this phone holds them.",
+                      symbol: "mappin.and.ellipse",
+                      category: .mobile,
+                      keywords: ["places", "home", "university", "work", "name", "rename", "alias",
+                                 "routine", "usually", "where am i", "known places"]),
 
         // MARK: PC-Prime
         SettingsEntry(destination: .waking,
