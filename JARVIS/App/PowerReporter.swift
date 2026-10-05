@@ -232,7 +232,7 @@ final class PowerReporter: ObservableObject {
     /// The same rules as the PC's `DevicePowerWording`: a fresh reading in the present tense, an
     /// old one as a memory, and no number where none was measured. Kept short rather than ported
     /// wholesale - this phone only ever says it about readings it took itself seconds ago.
-    static func say(_ reading: PowerReading, now: Date = Date()) -> String {
+    nonisolated static func say(_ reading: PowerReading, now: Date = Date()) -> String {
         guard let percent = reading.percent else {
             return MobilePhrases.noBatteryReading(reading.name, because: reading.because)
         }
@@ -255,7 +255,12 @@ final class PowerReporter: ObservableObject {
     }
 
     /// Everything readable, as JARVIS would say it.
-    static func sayAll(_ readings: [PowerReading], now: Date = Date()) -> String {
+    ///
+    /// `nonisolated` because it is wording over values and nothing else: readings in, a sentence
+    /// out. Bound to the main actor it could not be called from `MobileStatus`, which is also
+    /// wording over values, and the two would have had to be the same type to share a thread they
+    /// neither of them need.
+    nonisolated static func sayAll(_ readings: [PowerReading], now: Date = Date()) -> String {
         readings.isEmpty
             ? MobilePhrases.nothingReadable()
             : readings.map { say($0, now: now) }.joined(separator: "\n")
@@ -265,7 +270,7 @@ final class PowerReporter: ObservableObject {
     ///
     /// The same matching the PC's tool uses: an exact name or id first, then a name containing what
     /// was said, so "phone" finds this iPhone and "airpods" finds the AirPods.
-    static func matching(_ wanted: String?, in readings: [PowerReading]) -> [PowerReading] {
+    nonisolated static func matching(_ wanted: String?, in readings: [PowerReading]) -> [PowerReading] {
         guard let wanted, !wanted.trimmingCharacters(in: .whitespaces).isEmpty else { return readings }
 
         let said = wanted.trimmingCharacters(in: .whitespaces)
