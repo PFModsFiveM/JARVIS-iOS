@@ -948,6 +948,14 @@ final class AppModel: ObservableObject {
         // indistinguishable from one that has not moved.
         await PowerReporter.shared.reportEverything()
 
+        // And whether any of that is worth telling the owner about while they are not looking -
+        // programme §57. Every decision is `JarvisNotices`'; this is the one line that says when
+        // to consider it, which is on every connection and every state change.
+        await NoticeCentre.shared.consider(
+            nodeState,
+            power: PowerReporter.shared.readings,
+            queued: timeline.state.queued)
+
         // And what every other node said. The headset's battery is readable only by the PC it is
         // paired to, so this is the only way it reaches a phone at all.
         await PowerReporter.shared.askTheOthers { kind in
