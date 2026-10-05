@@ -167,10 +167,17 @@ final class PowerReporter: ObservableObject {
 
     /// Asks the PC what every node last said about power.
     ///
-    /// Quietly: a PC that predates the request answers "failed", and what this phone already had
-    /// stays as it was rather than being wiped by an older PC.
+    /// **`power.all`, not `power`.** The dot matters and getting it wrong cost this page: bare
+    /// `power` is the PC's own sleep, restart and shut-down action and has been since this app was
+    /// built, so asking it for readings reached the action handler, which rejected it for carrying
+    /// no valid action. The read has its own kind.
+    ///
+    /// Quietly: a PC that predates the kind answers "failed", and what this phone already had stays
+    /// as it was rather than being wiped by an older PC. The reply's kind is checked as well as the
+    /// request's, so a refusal is never read as an empty answer - which is what would silently
+    /// clear the page.
     func askTheOthers(_ ask: (String) async throws -> BridgeMessage) async {
-        guard let reply = try? await ask("power"), reply.kind == "power" else { return }
+        guard let reply = try? await ask("power.all"), reply.kind == "power.all" else { return }
 
         let rows = (reply.body["devices"] as? [[String: Any]] ?? []).compactMap(SharedPowerReading.init)
 

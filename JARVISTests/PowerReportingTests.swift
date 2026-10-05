@@ -210,4 +210,60 @@ final class PowerReportingTests: XCTestCase {
 
         XCTAssertEqual(sent.count, 2, "plugging it in is worth telling the PC about")
     }
+    // MARK: Asking the PC - the kind, which is the thing that broke
+
+    /// The read has its own kind, and it is not the shut-down action's.
+    func testThePhoneAsksForReadingsRatherThanForTheShutDownAction() async {
+        var asked: [String] = []
+
+        await PowerReporter().askTheOthers { kind in
+            asked.append(kind)
+            return BridgeMessage(kind: kind, id: "1", body: ["devices": []])
+        }
+
+        // Bare "power" is the PC's sleep, restart and shut-down action. Asking it for readings
+        // reached the action handler, which rejected the request, and this page went blank.
+        XCTAssertEqual(asked, ["power.all"])
+    }
+
+    func testRowsFromThePcArriveAndThisPhonesOwnAreLeftToTheLocalReading() async {
+        let reporter = PowerReporter()
+
+        await reporter.askTheOthers { kind in
+            BridgeMessage(kind: kind, id: "1", body: ["devices": [self.desktopRow]])
+        }
+
+        XCTAssertEqual(reporter.elsewhere.map(\.deviceId), ["desktop"])
+    }
+
+    /// A refusal must not be read as "every other node has no battery".
+    ///
+    /// The guard checks the reply's kind as well as the request's, because a PC that has never
+    /// heard of the kind answers "failed" with an empty body - and reading that as an answer is
+    /// what would silently clear a page that was previously right.
+    func testARefusalLeavesWhatThePhoneAlreadyHad() async {
+        let reporter = PowerReporter()
+
+        await reporter.askTheOthers { kind in
+            BridgeMessage(kind: kind, id: "1", body: ["devices": [self.desktopRow]])
+        }
+
+        XCTAssertEqual(reporter.elsewhere.map(\.deviceId), ["desktop"])
+
+        await reporter.askTheOthers { _ in
+            BridgeMessage(kind: "failed", id: "2", body: ["message": "The PC does not know that."])
+        }
+
+        // Still there. This is the assertion that would have caught the wrong kind, because the
+        // symptom of asking for the action was a refusal arriving where an answer was expected.
+        XCTAssertEqual(reporter.elsewhere.map(\.deviceId), ["desktop"])
+    }
+
+    /// One row in the shape the PC's `power.all` reply actually sends.
+    private var desktopRow: [String: Any] {
+        ["deviceId": "desktop", "name": "DESKTOP", "percent": 100, "charge": "mains",
+         "reporter": "DESKTOP", "freshness": "Live", "said": "the desk is on mains",
+         "measuredAt": ISO8601DateFormatter().string(from: noon)]
+    }
+
 }
