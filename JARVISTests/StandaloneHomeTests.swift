@@ -180,8 +180,12 @@ final class StandaloneHomeTests: XCTestCase {
 
         XCTAssertNil(done.confirmed)
         XCTAssertEqual(done.outcome, .sent)
-        XCTAssertFalse(done.sentence.lowercased().contains("confirm"),
-                       "or rather: it says it cannot confirm, not that it did")
+
+        // It must say it cannot confirm, and must not claim it did. The distinction is the whole
+        // point of the two steps, and a sentence containing the word "confirm" is not the test -
+        // whether it is a claim or a disclaimer is.
+        XCTAssertTrue(done.sentence.contains("can't confirm"), done.sentence)
+        XCTAssertFalse(done.sentence.hasPrefix("Confirmed"), done.sentence)
     }
 
     /// A hub that is not online never reaches the read-back at all.
@@ -209,8 +213,18 @@ final class StandaloneHomeTests: XCTestCase {
     }
 
     func testAPartialNameThatFitsTwoDevicesResolvesToNeither() {
-        XCTAssertNil(StandbyExecutor.binding(named: "light", in: [light, lamp]),
-                     "'light' is in both names, so it names neither")
+        let hall = StandbyDevice([
+            "id": "hall_light", "name": "Hall Light", "room": "Hall", "kind": "light",
+            "provider": "SwitchBot", "providerDeviceId": "111122223333", "preferPress": false
+        ])!
+
+        XCTAssertNil(StandbyExecutor.binding(named: "light", in: [light, hall]),
+                     "'light' is inside both names, so it names neither")
+
+        // And one partial name that fits only one still resolves: "Desk Lamp" has no "light" in it,
+        // so two lights are ambiguous and a light beside a lamp is not.
+        XCTAssertEqual(StandbyExecutor.binding(named: "light", in: [light, lamp])?.id, "bedroom_main_light")
+
         XCTAssertNil(StandbyExecutor.binding(named: "", in: [light]))
         XCTAssertNil(StandbyExecutor.binding(named: "greenhouse", in: [light]))
     }
