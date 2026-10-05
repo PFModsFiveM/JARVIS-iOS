@@ -8,7 +8,13 @@ import XCTest
 /// signature over it, and a signature over something that was not understood is the one mistake
 /// this flow must not be able to make.
 final class UnlockChallengeTests: XCTestCase {
-    private let now = Date(timeIntervalSince1970: 1_780_000_000)
+    /// The same instant the fixtures below are issued at, written the same way they are.
+    ///
+    /// It was an epoch number, and the number was fourteen hours off the ISO strings beside it -
+    /// so a challenge the test called "live" had already been expired for most of a day and
+    /// secondsLeft came back as 50430. Derived from the text now, because two spellings of one
+    /// moment is two things to keep in agreement and they did not stay in agreement.
+    private let now = ISO8601DateFormatter().date(from: "2026-05-29T10:26:40Z")!
 
     private func reply(
         protocolVersion: Any? = 1,
