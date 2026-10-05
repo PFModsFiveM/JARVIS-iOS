@@ -82,6 +82,12 @@ enum IntentStandalone {
         // Where the owner is - programme §1E. Answered out here as well as in the app, because
         // "Siri, ask JARVIS where I am" is the case this is most useful in: the phone is in a
         // pocket and the app is not open.
+        // Naming a place is deliberately not answered out here. It changes something, and a
+        // Shortcut or a Siri phrase misheard as "this is home" would rename the owner's house
+        // with nothing on screen to show it had happened. Asking where you are only reads.
+        case .namePlace:
+            return nil
+
         case .whereabouts(let asked, let named):
             return PlaceAnswers.answer(asked, named: named, from: PlaceAnswers.Evidence(
                 fix: AppModel.shared.whereabouts.fix,
