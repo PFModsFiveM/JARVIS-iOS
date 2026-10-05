@@ -270,7 +270,9 @@ final class PowerReporter: ObservableObject {
     ///
     /// The same matching the PC's tool uses: an exact name or id first, then a name containing what
     /// was said, so "phone" finds this iPhone and "airpods" finds the AirPods.
-    nonisolated static func matching(_ wanted: String?, in readings: [PowerReading]) -> [PowerReading] {
+    /// Stays on the main actor, unlike `say` and `sayAll`: its last resort is "my phone means
+    /// whichever device this pairing calls itself", and that is app state rather than wording.
+    static func matching(_ wanted: String?, in readings: [PowerReading]) -> [PowerReading] {
         guard let wanted, !wanted.trimmingCharacters(in: .whitespaces).isEmpty else { return readings }
 
         let said = wanted.trimmingCharacters(in: .whitespaces)
