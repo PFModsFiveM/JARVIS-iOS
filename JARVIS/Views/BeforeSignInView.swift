@@ -38,6 +38,10 @@ struct BeforeSignInPanel: View {
 
         row("Key", machine.paired?.fingerprint ?? "-")
 
+        Divider().overlay(HUD.dim.opacity(0.3))
+
+        UnlockPCCard(machine: machine)
+
         if let problem = machine.problem {
             Text(problem).font(.footnote).foregroundStyle(HUD.amber)
         }

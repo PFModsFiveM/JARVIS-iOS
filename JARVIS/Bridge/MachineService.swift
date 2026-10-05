@@ -48,6 +48,17 @@ struct MachineReport: Equatable {
     /// distinction this whole endpoint exists to draw.
     let desktopRunning: Bool
 
+    /// Whether a phone could sign this machine in at all.
+    ///
+    /// The service answers this because the phone cannot work it out: whether the stored Windows
+    /// credential is still good is discovered inside Windows, after an authorization has already
+    /// been accepted. Without it, a PC needing re-enrolment looks exactly like one where nothing
+    /// happened.
+    let unlock: UnlockReadiness
+
+    /// Windows' own reason, when the credential needs enrolling again. Nil otherwise.
+    let unlockBecause: String?
+
     let at: Date
 
     /// A line for the PC's row in Home: what somebody would want to know before pressing anything.
@@ -72,6 +83,12 @@ struct MachineReport: Equatable {
             session: session,
             described: body["described"] as? String ?? session.rawValue,
             desktopRunning: (body["desktop"] as? String) == "online",
+
+            // An older service does not send this. Unknown rather than unsupported, because the
+            // two mean different things to the card: one is a PC that cannot do it, the other is
+            // a PC that has not said.
+            unlock: (body["unlock"] as? String).flatMap(UnlockReadiness.init(rawValue:)) ?? .unknown,
+            unlockBecause: body["unlockBecause"] as? String,
             at: at)
     }
 }
@@ -133,7 +150,22 @@ final class MachineLink: ObservableObject {
     /// The six digits during pairing, compared against the ones the PC's console prints.
     @Published var pairingDigits: String?
 
-    private let model: AppModel
+    /// Where an unlock has got to, when one is happening.
+    ///
+    /// The flow that moves this lives in `MachineLink+Unlock.swift`; the property has to be here
+    /// because an extension cannot add stored state, and `enter` has to exist because
+    /// `private(set)` is scoped to this file.
+    @Published private(set) var stage: UnlockStage = .idle
+
+    /// Moved only by the unlock flow.
+    func enter(_ stage: UnlockStage) { self.stage = stage }
+
+    /// Forgets the outcome of the last unlock, so a finished one does not sit on the card.
+    func clearUnlock() { stage = .idle }
+
+    /// Internal rather than private: the unlock flow is a separate file and needs the same
+    /// addresses, and a second copy of how to find the PC is how the two would diverge.
+    let model: AppModel
 
     init(model: AppModel = .shared) {
         self.model = model

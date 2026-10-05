@@ -20,14 +20,55 @@ protocol BridgeSigningKey {
 /// Only the Secure Enclave's opaque, device-bound handles are stored in the Keychain; they are useless on any other
 /// device. On the Simulator, which has no Secure Enclave, software keys stand in so the UI can be tried.
 enum DeviceKeys {
-    enum Failure: LocalizedError {
+    /// Why an approval did not happen.
+    ///
+    /// Six cases rather than one because they need six different things from the owner, and
+    /// collapsing them - which this did, into `cancelled` - tells somebody whose Face ID is simply
+    /// not set up that they cancelled something. They did not, and they will go looking in the
+    /// wrong place. Only `cancelled` is the owner deciding; the rest are the phone being unable.
+    enum Failure: LocalizedError, Equatable {
         case accessControl
         case cancelled
+        case biometryUnavailable
+        case biometryNotEnrolled
+        case biometryLockedOut
+        case didNotMatch
+        case failed(String)
+
+        /// The owner choosing not to. Not an error, and never reported as one.
+        var isCancellation: Bool { self == .cancelled }
 
         var errorDescription: String? {
             switch self {
             case .accessControl: return "The Secure Enclave key could not be created."
             case .cancelled: return "Face ID was cancelled."
+            case .biometryUnavailable: return "Face ID isn't available on this phone."
+            case .biometryNotEnrolled: return "Face ID isn't set up on this phone yet."
+            case .biometryLockedOut: return "Face ID is locked out. Unlock the phone with your passcode first."
+            case .didNotMatch: return "Face ID didn't recognise you."
+            case .failed(let what): return what
+            }
+        }
+
+        /// Reads what LocalAuthentication actually said.
+        ///
+        /// The three cancels are one case to the owner: a sheet that went away because they, the
+        /// system or the app dismissed it. Everything LocalAuthentication can say that is not in
+        /// this list is carried through in words rather than flattened, so an unfamiliar failure
+        /// arrives as itself.
+        static func reading(_ error: Error) -> Failure {
+            guard let la = error as? LAError else {
+                return .failed((error as NSError).localizedDescription)
+            }
+
+            switch la.code {
+            case .userCancel, .systemCancel, .appCancel: return .cancelled
+            case .biometryNotAvailable, .touchIDNotAvailable: return .biometryUnavailable
+            case .biometryNotEnrolled, .touchIDNotEnrolled: return .biometryNotEnrolled
+            case .biometryLockout, .touchIDLockout: return .biometryLockedOut
+            case .authenticationFailed: return .didNotMatch
+            case .userFallback: return .cancelled
+            default: return .failed(la.localizedDescription)
             }
         }
     }
@@ -78,7 +119,7 @@ enum DeviceKeys {
             do {
                 _ = try await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason)
             } catch {
-                throw Failure.cancelled
+                throw Failure.reading(error)
             }
             let key = try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: blob, authenticationContext: context)
             return try key.signature(for: data).derRepresentation
