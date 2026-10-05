@@ -76,7 +76,7 @@ final class CloudStatusTests: XCTestCase {
         // The key is fine and the phone has a route out. Calling it "no connection" would send the
         // owner to check their Wi-Fi over a fault at the provider's end.
         XCTAssertEqual(held.readiness, .reachable)
-        XCTAssertTrue(held.lastProblem?.contains("their end") ?? held.lastProblem?.contains("its end") ?? false)
+        XCTAssertEqual(held.lastProblem, "The provider is having trouble at its end.")
     }
 
     func testAnUnexplainedRefusalWithNoKeyStillCountsAsSetUp() {
