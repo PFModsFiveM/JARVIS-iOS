@@ -213,7 +213,7 @@ final class MobileAliases: ObservableObject {
         var aliases: [MobileAlias]
     }
 
-    private static func defaultStore() -> URL? {
+    nonisolated private static func defaultStore() -> URL? {
         guard let folder = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
 

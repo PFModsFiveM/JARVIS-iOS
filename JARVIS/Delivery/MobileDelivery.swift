@@ -270,7 +270,7 @@ final class MobileDelivery: ObservableObject {
         var spoken: [SpokenHere]
     }
 
-    private static func defaultStore() -> URL? {
+    nonisolated private static func defaultStore() -> URL? {
         guard let folder = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
 
