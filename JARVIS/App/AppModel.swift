@@ -930,6 +930,9 @@ final class AppModel: ObservableObject {
         // programme §1C. On every connection, incrementally, and with no button anywhere.
         await pullPlaces()
 
+        // A few more of JARVIS's own phrases, so the voice survives the desk going to sleep.
+        await warmTheVoiceCache()
+
         // What this phone may work by itself while the PC is off.
         //
         // Here, on every connection, rather than when a screen that shows devices happens to open -
@@ -1373,9 +1376,65 @@ final class AppModel: ObservableObject {
     // from different nodes, would not deduplicate.
 
     /// Says something, in the transcript and aloud when this turn should be heard.
+    ///
+    /// Everything spoken on this phone goes through here and through `speak`, which is what makes
+    /// the ladder in `MobileVoiceRouter` the only answer to "whose voice was that".
     private func answer(_ text: String, spoken: Bool) {
         lines.append(ChatLine(speaker: .jarvis, text: text))
-        if speakAnswers || spoken { voice.say(text) }
+
+        if speakAnswers || spoken { speak(text) }
+    }
+
+    /// Whether the phone's own voice may stand in when JARVIS's is not available - programme §4A.
+    ///
+    /// Off by default, and that is the point. A generic British voice answering in JARVIS's place
+    /// is not a degraded JARVIS, it is a different assistant, and being surprised by it is worse
+    /// than reading the words. The owner can turn it on if they would rather that than silence.
+    @Published var systemVoiceAllowed = UserDefaults.standard.bool(forKey: "systemVoiceAllowed") {
+        didSet { UserDefaults.standard.set(systemVoiceAllowed, forKey: "systemVoiceAllowed") }
+    }
+
+    /// The last route taken, for the settings page to show rather than for a log.
+    @Published private(set) var lastVoiceRoute: VoiceRoute?
+
+    /// Speaks one sentence by the best route available - programme §4A.
+    func speak(_ text: String) {
+        let able = MobileVoiceRouter.Able(
+            cached: VoiceCache.shared.holds(text) ? text : nil,
+            onDevice: false,
+            pcAnswering: link.isOnline,
+            systemVoiceAllowed: systemVoiceAllowed,
+            speaking: true)
+
+        let route = MobileVoiceRouter.route(text, able: able)
+        lastVoiceRoute = route
+
+        switch route {
+        case .cached:
+            guard let held = VoiceCache.shared.audio(for: text),
+                  voice.play(wav: held.wav, mouth: held.mouth)
+            else {
+                // The index said it was there and the audio would not play. Fall to the next rung
+                // rather than going silent, and the cache drops it on its next pass.
+                if systemVoiceAllowed { voice.say(text) }
+                return
+            }
+
+        case .onDevice:
+            // Never chosen: `MobileVoiceRouter.whyNotOnDevice` says what is missing.
+            if systemVoiceAllowed { voice.say(text) }
+
+        case .fromThePC:
+            // The PC renders and pushes it, in the same chunks an answer's voice arrives in, so
+            // the receive machinery is the one that was already there.
+            Task { await self.render(text) }
+
+        case .systemVoice:
+            voice.say(text)
+
+        case .text:
+            break
+        }
     }
 
     /// Files a network transition, which explains a gap in what this phone reported.
@@ -1519,6 +1578,47 @@ final class AppModel: ObservableObject {
 
     // MARK: JARVIS's voice
 
+    /// Asks the PC to render one sentence in JARVIS's voice - programme §4A.
+    ///
+    /// For the sentences this phone composes itself. Before this the local path spoke in the
+    /// phone's own voice however awake the PC was, because a render only ever rode an answer the
+    /// PC had given - so switching a light from the phone sounded like a different assistant.
+    func render(_ text: String) async {
+        guard link.isOnline, let client = try? await session() else { return }
+
+        do {
+            let reply = try await client.request("voice.render", ["text": text])
+
+            // Armed after the reply, which is what the answer path does and is safe for the same
+            // reason: `receiveVoice` buffers pushes under their request id whether anything is
+            // waiting or not, so a render that arrives first is still assembled.
+            expectVoice(for: reply.id, fallback: systemVoiceAllowed ? text : "")
+        } catch {
+            // Nothing is waiting, so nothing needs cancelling. The words are already on screen.
+            if systemVoiceAllowed { voice.say(text) }
+        }
+    }
+
+    /// Fills the phrase cache from the PC, so JARVIS's own voice survives the desk going to sleep.
+    ///
+    /// A handful of sentences at a time rather than all of them at once: this runs on a
+    /// connection the owner did not ask for, and a burst of twenty renders would be noticeable on
+    /// a PC that is doing something. The rest arrive on later connections, which is soon enough
+    /// for a cache whose whole purpose is to be ready next week.
+    func warmTheVoiceCache() async {
+        guard link.isOnline, !VoiceCache.shared.voiceId.isEmpty else { return }
+
+        let wanted = VoiceCache.shared.missing().prefix(3)
+
+        for kind in wanted {
+            await render(kind.words)
+
+            // Rendered one at a time: the push machinery tracks one outstanding render, and two
+            // at once would have the second overwrite the first's wait.
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+        }
+    }
+
     /// The words are in; the voice follows as "voice" pushes. Wait a little for it, then read the words out instead.
     private func expectVoice(for id: String, fallback: String) {
         cancelVoiceWait()
@@ -1567,14 +1667,23 @@ final class AppModel: ObservableObject {
         }
         voiceParts[id] = nil
         cancelVoiceWait()
-        if !voice.play(wav: wav, mouth: entry.mouth) { voice.say(wait.text) }
+
+        // Kept before playing, so a sentence JARVIS says often is in its own voice next time even
+        // with the PC asleep - programme §4C. Keyed on the words and the voice together, so
+        // changing the voice orphans the old audio rather than serving it.
+        VoiceCache.shared.keep(wait.text, wav: wav, mouth: entry.mouth)
+
+        if !voice.play(wav: wav, mouth: entry.mouth), systemVoiceAllowed { voice.say(wait.text) }
     }
 
     private func voiceUnavailable(_ id: String) {
         guard let wait = voiceWait, wait.id == id else { return }
         voiceParts[id] = nil
         cancelVoiceWait()
-        voice.say(wait.text)
+
+        // An empty fallback means the caller has already decided the words are to be shown rather
+        // than spoken by a voice that is not JARVIS's.
+        if !wait.text.isEmpty { voice.say(wait.text) }
     }
 
     private func cancelVoiceWait() {
