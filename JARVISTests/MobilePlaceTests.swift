@@ -58,8 +58,8 @@ final class MobilePlaceTests: XCTestCase {
     }
 
     func testARowSurvivesBeingRead() {
-        let read = MobilePlace(row(id: "A", name: "University", aliases: "uni\u{1f}college",
-                                   category: "Study", arrives: 550))
+        let read = MobilePlace(row(id: "A", name: "University", category: "Study",
+                                   aliases: "uni\u{1f}college", arrives: 550))
 
         XCTAssertEqual(read?.name, "University")
         XCTAssertEqual(read?.aliases, ["uni", "college"])
@@ -474,7 +474,7 @@ final class MobilePlaceTests: XCTestCase {
         book.forget()
         defer { book.forget() }
 
-        book.apply([row(id: "A", name: "22 Somewhere Road", category: "Home", revision: 1)])
+        book.apply([row(id: "A", name: "22 Somewhere Road", revision: 1, category: "Home")])
 
         XCTAssertEqual(book.home?.id, "A")
     }
