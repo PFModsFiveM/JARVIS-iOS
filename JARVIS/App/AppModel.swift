@@ -916,6 +916,16 @@ final class AppModel: ObservableObject {
         // which is exactly what should happen: the app keeps whatever it already had.
         if let reply = try? await client.request("network"), reply.kind == "network" { learnNetwork(reply.body) }
 
+        // This phone as a node of the one timeline - programme §9 and §10.
+        //
+        // On every connection rather than on a button. The owner granted the pairing; being asked
+        // to press Sync afterwards would mean JARVIS knew less than it could because nobody
+        // tapped. Push first, then pull: what this phone observed while the PC was off is the
+        // thing most likely to be missing, and the pull is how it finds out what happened at the
+        // desk while it was away.
+        timeline.identify(as: pc?.deviceId ?? "")
+        await timeline.sync(exchanging)
+
         // What this phone may work by itself while the PC is off.
         //
         // Here, on every connection, rather than when a screen that shows devices happens to open -
@@ -944,6 +954,44 @@ final class AppModel: ObservableObject {
             guard let client = try? await self.session() else { throw BridgeError.closed }
             return try await client.request(kind)
         }
+    }
+
+    /// The shared timeline, as this phone's node of it.
+    var timeline: OwnerTimelineClient { OwnerTimelineClient.shared }
+
+    /// Puts one request on the bridge and hands back its body.
+    ///
+    /// The seam the timeline client is built against, so it can be tested without an app, a PC or
+    /// a network - and so the one place that knows how to reach the PC stays here.
+    var exchanging: (String, [String: Any]) async throws -> [String: Any] {
+        { [weak self] kind, body in
+            guard let self else { throw BridgeError.closed }
+            return try await self.session().request(kind, body, timeout: 25).body
+        }
+    }
+
+    /// Files one observation this phone made, and lets the client decide when it travels.
+    ///
+    /// Takes the exchange rather than reaching for it, so an observation made with the PC off is
+    /// queued by exactly the same call that sends one made with the PC up.
+    func observe(
+        _ type: String,
+        _ category: OwnerEventCategory,
+        payload: [String: String] = [:],
+        occurred: Date = Date(),
+        confidence: Double = 1,
+        sensitivity: OwnerEventSensitivity = .medium,
+        key: String
+    ) {
+        timeline.record(
+            type,
+            category: category,
+            payload: payload,
+            occurred: occurred,
+            confidence: confidence,
+            sensitivity: sensitivity,
+            key: key,
+            exchange: link.isOnline ? exchanging : nil)
     }
 
     /// Starts reporting this phone's power, once.
@@ -1028,16 +1076,18 @@ final class AppModel: ObservableObject {
         switch lane {
         case .unavailable(let because):
             answer(because, spoken: spoken)
+            fileTurn(request, because)
             return true
 
         case .localMobile(let capability), .directDevice(let capability):
-            return await carryOut(capability, spoken: spoken)
+            return await carryOut(capability, request: request, spoken: spoken)
 
         case .cloud:
             thinking = true
             let said = await CloudIntelligence.shared.ask(request)
             thinking = false
             answer(said, spoken: spoken)
+            fileTurn(request, said)
             return true
 
         case .pcPrime:
@@ -1046,18 +1096,30 @@ final class AppModel: ObservableObject {
     }
 
     /// One of the few requests this phone answers itself.
-    private func carryOut(_ capability: LocalCapability, spoken: Bool) async -> Bool {
+    private func carryOut(_ capability: LocalCapability, request: String, spoken: Bool) async -> Bool {
         switch capability {
         case .wake:
-            lines.append(ChatLine(speaker: .jarvis, text: wakeAnswer()))
+            let said = wakeAnswer()
+            lines.append(ChatLine(speaker: .jarvis, text: said))
             wakePC()
+
+            // A wake is a fact about a node rather than a turn of conversation, and the PC will
+            // want it: it explains why it came up, which nothing at the desk can see for itself.
+            observe(OwnerEventTypes.pcWoken, .node,
+                    payload: ["node": pcName, "by": "phone"],
+                    sensitivity: .low,
+                    key: "\(pcName)|\(Int(Date().timeIntervalSince1970))")
+
+            fileTurn(request, said)
             return true
 
         // The other thing a sleeping PC cannot be asked: what it is doing. The pre-login service
         // can answer it when JARVIS cannot, and when JARVIS can, it goes to JARVIS - which knows
         // everything the service does and a great deal more.
         case .state:
-            answer(await machineAnswer(), spoken: spoken)
+            let said = await machineAnswer()
+            answer(said, spoken: spoken)
+            fileTurn(request, said)
             return true
 
         // How a device is doing for battery. Readable only by the device it is in, so this phone
@@ -1067,9 +1129,12 @@ final class AppModel: ObservableObject {
             PowerReporter.shared.read()
             let matched = PowerReporter.matching(target, in: PowerReporter.shared.readings)
 
-            answer(matched.isEmpty && target != nil
+            let said = matched.isEmpty && target != nil
                 ? MobilePhrases.nothingCalledWithABattery(target!)
-                : PowerReporter.sayAll(matched), spoken: spoken)
+                : PowerReporter.sayAll(matched)
+
+            answer(said, spoken: spoken)
+            fileTurn(request, said)
             return true
 
         // A light the PC cannot relay a command to, because it is off. The same action the panel's
@@ -1080,6 +1145,8 @@ final class AppModel: ObservableObject {
             let said = await SmartHomeModel.shared.work(id, command)
             thinking = false
             answer(said, spoken: spoken)
+            fileDeviceWork(id, command, said)
+            fileTurn(request, said)
             return true
 
         case .deviceToggle(let id):
@@ -1087,8 +1154,33 @@ final class AppModel: ObservableObject {
             let said = await SmartHomeModel.shared.toggle(id)
             thinking = false
             answer(said, spoken: spoken)
+            fileTurn(request, said)
             return true
         }
+    }
+
+    /// Files a device this phone worked without the PC - programme §7 and §26.
+    ///
+    /// The PC owns the device state and normally files this itself, but it cannot have seen a
+    /// command it never relayed. Confirmation is carried honestly: a vendor accepting a command is
+    /// not a rocker moving, and the confidence says so rather than the sentence having to.
+    private func fileDeviceWork(_ id: String, _ command: StandbyCommand, _ said: String) {
+        let name = SmartHomeModel.shared.standby.first { $0.id == id }?.name ?? id
+        let confirmed = said.lowercased().contains("confirmed")
+
+        observe(
+            OwnerEventTypes.deviceWorked,
+            .device,
+            payload: [
+                "device": name,
+                "deviceId": id,
+                "command": command == .on ? "on" : command == .off ? "off" : "press",
+                "confirmed": confirmed ? "true" : "false",
+                "by": "phone"
+            ],
+            confidence: confirmed ? 1 : 0.5,
+            sensitivity: .low,
+            key: "\(id)|\(command)|\(Int(Date().timeIntervalSince1970))")
     }
 
     /// The PC's lane. False when the PC could not be reached at all, so a fallback may try.
@@ -1122,11 +1214,51 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // A turn the PC answered is filed by the PC, which knows what it did with it. Filing it here
+    // as well would put two events in the timeline for one sentence - and the ids, being derived
+    // from different nodes, would not deduplicate.
+
     /// Says something, in the transcript and aloud when this turn should be heard.
     private func answer(_ text: String, spoken: Bool) {
         lines.append(ChatLine(speaker: .jarvis, text: text))
         if speakAnswers || spoken { voice.say(text) }
     }
+
+    /// Files a network transition, which explains a gap in what this phone reported.
+    ///
+    /// Programme §6: a phone that went into a tunnel and came out looks, from the PC, exactly like
+    /// a phone that stopped working. One observation at each edge is the difference.
+    func networkTransition(offline: Bool, cellular: Bool) {
+        observe(
+            OwnerEventTypes.network,
+            .node,
+            payload: [
+                "node": "phone",
+                "state": offline ? "offline" : (cellular ? "cellular" : "wifi")
+            ],
+            sensitivity: .low,
+            key: "\(offline)|\(cellular)|\(Int(Date().timeIntervalSince1970 / 60))")
+    }
+
+    /// Files a turn held on this phone, so the PC knows the conversation happened.
+    ///
+    /// Programme §17 and §18: "give me three ideas" asked here and "let us use the second one"
+    /// asked at the desk are one conversation, and the only way the desk can know that is if the
+    /// turn travelled. Urgent by category, because the next turn may arrive at the other node.
+    private func fileTurn(_ request: String, _ said: String) {
+        observe(
+            OwnerEventTypes.asked,
+            .conversation,
+            payload: ["said": request, "answered": said, "conversation": conversationId],
+            key: "\(request)|\(Int(Date().timeIntervalSince1970))")
+    }
+
+    /// This phone's conversation, for a turn to belong to.
+    ///
+    /// One per launch. Finer than that would make every turn its own conversation and lose the
+    /// reference that the handoff exists to resolve; coarser would tie a question asked this
+    /// morning to an answer given last week.
+    private(set) lazy var conversationId: String = UUID().uuidString
 
     /// This phone as a node: what it can do at this moment, as plain values.
     ///

@@ -36,6 +36,7 @@ enum SettingsDestination: String, CaseIterable, Hashable, Codable {
 
     // SMART HOME
     case smartHome = "smart-home"
+    case homeIndependence = "independence"
 
     // DEVICES & POWER
     case power = "power"
@@ -45,6 +46,7 @@ enum SettingsDestination: String, CaseIterable, Hashable, Codable {
 
     // LEARNING
     case learning = "learning"
+    case sharedJarvis = "shared"
 
     // ADVANCED
     case diagnostics = "diagnostics"
@@ -185,6 +187,14 @@ enum SettingsCatalogue {
                       category: .smartHome,
                       keywords: ["lights", "bedroom", "switchbot", "hub", "plug", "scene", "devices", "smart home"]),
 
+        SettingsEntry(destination: .homeIndependence,
+                      title: "Smart home independence",
+                      subtitle: "Whether this phone can switch a light with your PC off, and what is stopping it.",
+                      symbol: "stethoscope",
+                      category: .smartHome,
+                      keywords: ["independence", "diagnostic", "commissioning", "pc off", "standalone",
+                                 "hub", "token", "binding", "test", "why", "broken", "not working", "troubleshoot"]),
+
         // MARK: Devices and power
         SettingsEntry(destination: .power,
                       title: "Battery and power",
@@ -203,6 +213,14 @@ enum SettingsCatalogue {
                       keywords: ["r2", "cloudflare", "bucket", "footage", "recordings", "store", "access key", "s3", "pc off"]),
 
         // MARK: Learning
+        SettingsEntry(destination: .sharedJarvis,
+                      title: "One JARVIS",
+                      subtitle: "What this phone has told your PC, and what it has heard back.",
+                      symbol: "arrow.triangle.2.circlepath",
+                      category: .learning,
+                      keywords: ["sync", "shared", "timeline", "activity", "nodes", "queue", "revision",
+                                 "catching up", "one jarvis", "ecosystem"]),
+
         SettingsEntry(destination: .learning,
                       title: "Learning sessions",
                       subtitle: "What JARVIS works out about how it is being used.",

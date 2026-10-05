@@ -22,8 +22,10 @@ struct SettingsPage: View {
             case .waking: WakingPage()
             case .reaching: ReachingPage()
             case .smartHome: SmartHomePage()
+            case .homeIndependence: HomeIndependencePage()
             case .power: PowerPage()
             case .footageStore: FootageStorePage()
+            case .sharedJarvis: SharedJarvisPage()
             case .learning: LearningPage()
             case .diagnostics: DiagnosticsPage()
             case .encryption: EncryptionPage()
@@ -765,5 +767,272 @@ private struct AboutPage: View {
             }
         }
         .hudList()
+    }
+}
+
+
+// MARK: - Smart home independence - programme §2
+
+/// Whether this phone could switch a light with the PC off, line by line.
+///
+/// The page exists because "the light didn't come on" has eight different causes with eight
+/// different remedies, and they are indistinguishable from the outside. Each line is one link in
+/// the chain, in the order the chain runs, and the banner names the first one that is broken -
+/// because telling the owner the hub is unreachable when the real problem is a missing token would
+/// send them to look at the hub.
+///
+/// **The test reads rather than switches.** A status read proves the token, the network, the
+/// vendor, the hub and the device without touching the owner's light, which matters when the most
+/// likely time to run this is last thing at night. A read that comes back is the whole chain
+/// working; nothing else can establish that.
+private struct HomeIndependencePage: View {
+    @EnvironmentObject var model: AppModel
+    @ObservedObject private var home = SmartHomeModel.shared
+
+    @State private var probe: HomeIndependence.Probe?
+    @State private var testing = false
+
+    private var report: HomeIndependence {
+        HomeIndependence.read(
+            credentials: home.credentials,
+            bindings: home.standby,
+            pcAnswering: model.link.isOnline,
+            preferred: subject,
+            probe: probe,
+            lastCommandAt: lastCommand?.lastSuccessAt,
+            lastResult: lastCommand?.lastResult,
+            lastConfirmedState: lastCommand?.certainty == .confirmed ? lastCommand?.statusText : nil,
+            networkUp: !model.network.offline)
+    }
+
+    /// The device the page is about: the one light, or the first thing this phone was taught.
+    private var subject: StandbyDevice? {
+        home.standby.first { $0.kind == "light" } ?? home.standby.first
+    }
+
+    private var lastCommand: SmartDevice? {
+        subject.flatMap { binding in home.shown.first { $0.id == binding.id } }
+    }
+
+    var body: some View {
+        List {
+            if let blocker = report.blocker {
+                Section {
+                    SettingsNote("\(blocker.title): \(blocker.remedy)", colour: HUD.amber)
+                        .hudRow()
+                } header: {
+                    HUDSectionTitle(text: "What is stopping it")
+                }
+            }
+
+            Section {
+                StatusRow(title: "Route if asked now", status: route)
+            } footer: {
+                SettingsNote(model.link.isOnline
+                    ? "Your PC is answering, so commands go through it. That is the right route: the PC owns the state and tells every other node what changed."
+                    : "Your PC isn't answering, so this is what the phone would do by itself.")
+            }
+
+            Section {
+                CheckRow(title: "SwitchBot credentials", check: report.credentials)
+                CheckRow(title: "Device bindings", check: report.bindings)
+                CheckRow(title: subject.map { "\($0.name) known" } ?? "A device known", check: report.device)
+                CheckRow(title: "Direct vendor route", check: report.directRoute)
+                CheckRow(title: "PC route", check: report.pcRoute)
+                CheckRow(title: "Hub reachable", check: report.hub)
+            } header: {
+                HUDSectionTitle(text: "The chain")
+            } footer: {
+                SettingsNote("In the order it runs. The first NO is the one worth fixing.")
+            }
+
+            Section {
+                ActionRow(title: testing ? "Reading…" : "Test the direct route", symbol: "stethoscope") {
+                    Task { await test() }
+                }
+                .disabled(testing || subject == nil || home.credentials == nil)
+
+                if let probe {
+                    ValueRow(title: "Last read", value: Self.when(probe.at), monospaced: false)
+                    SettingsNote(probe.outcome.sentence,
+                                 colour: probe.blocker == nil ? HUD.good : HUD.amber)
+                        .hudRow()
+                    if let battery = probe.battery {
+                        ValueRow(title: "Device battery", value: "\(battery)%", monospaced: false)
+                    }
+                }
+            } header: {
+                HUDSectionTitle(text: "Test")
+            } footer: {
+                SettingsNote("Reads the switch rather than working it, so nothing in the room changes. A read that comes back proves the token, the network, SwitchBot, the hub and the device all at once.")
+            }
+
+            Section {
+                ValueRow(title: "Last command", value: report.lastCommandAt.map(Self.when) ?? "None yet", monospaced: false)
+                if let result = report.lastResult {
+                    SettingsNote(result).hudRow()
+                }
+                ValueRow(title: "Last confirmed state", value: report.lastConfirmedState ?? "Not confirmed", monospaced: false)
+            } header: {
+                HUDSectionTitle(text: "History")
+            }
+        }
+        .hudList()
+    }
+
+    private var route: SettingsStatus {
+        switch report.routeNow {
+        case .pc: return .live("PC")
+        case .mobileDirect: return .ready("MOBILE DIRECT")
+        case .unavailable(let why): return .fault("UNAVAILABLE — \(why)")
+        }
+    }
+
+    private func test() async {
+        guard let binding = subject, let credentials = home.credentials else { return }
+
+        testing = true
+        defer { testing = false }
+
+        let vendor = SwitchBotStandby(credentials: credentials, wiring: home.wiring)
+        let (outcome, battery) = await vendor.read(binding.vendorDeviceId)
+
+        probe = HomeIndependence.Probe(at: Date(), outcome: outcome, device: binding.name, battery: battery)
+    }
+
+    private static func when(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+}
+
+/// One link of the chain: its name, YES/NO/UNKNOWN, and what makes it so.
+private struct CheckRow: View {
+    let title: String
+    let check: HomeCheck
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).foregroundStyle(HUD.text)
+                if let detail = check.detail {
+                    Text(detail).font(.caption).foregroundStyle(HUD.dim)
+                }
+            }
+            Spacer(minLength: 12)
+            Text(check.word)
+                .font(.caption.weight(.semibold).monospaced())
+                .foregroundStyle(colour)
+        }
+        .hudRow()
+    }
+
+    private var colour: Color {
+        switch check {
+        case .yes: return HUD.good
+        case .no: return HUD.amber
+        case .unknown: return HUD.dim
+        }
+    }
+}
+
+// MARK: - One JARVIS - programme §64
+
+/// What this phone has told the PC, and what it has heard back.
+///
+/// There is no Sync button here, and that is the point rather than an omission: the owner granted
+/// the pairing, and being asked to press Sync afterwards would mean JARVIS knew less than it could
+/// because nobody tapped. The page reports; it does not ask for permission to work.
+private struct SharedJarvisPage: View {
+    @EnvironmentObject var model: AppModel
+    @ObservedObject private var timeline = OwnerTimelineClient.shared
+
+    var body: some View {
+        List {
+            Section {
+                StatusRow(title: "Exchange", status: exchange)
+                ValueRow(title: "Waiting to send", value: "\(timeline.state.queued)")
+                ValueRow(title: "Held from your PC", value: "\(timeline.state.kept)")
+                ValueRow(title: "Last exchange", value: timeline.state.lastSync.map(Self.when) ?? "Not yet", monospaced: false)
+            } header: {
+                HUDSectionTitle(text: "This phone")
+            } footer: {
+                SettingsNote("Observations made with your PC off wait here and go on their own as soon as there is a route. Nothing needs pressing.")
+            }
+
+            Section {
+                ValueRow(title: "This phone has", value: "\(timeline.state.cursor)")
+                ValueRow(title: "Your PC has", value: "\(timeline.state.pcRevision)")
+                if timeline.state.behind {
+                    SettingsNote("Catching up on \(timeline.state.pcRevision - timeline.state.cursor) more.", colour: HUD.accent)
+                        .hudRow()
+                }
+                if let problem = timeline.state.problem {
+                    SettingsNote(problem, colour: HUD.amber).hudRow()
+                }
+            } header: {
+                HUDSectionTitle(text: "Revisions")
+            } footer: {
+                SettingsNote("Counting positions in your PC's log, so catching up costs what has changed rather than everything.")
+            }
+
+            if !recent.isEmpty {
+                Section {
+                    ForEach(recent) { event in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(Self.say(event)).foregroundStyle(HUD.text)
+                            Text(Self.when(event.occurred)).font(.caption).foregroundStyle(HUD.dim)
+                        }
+                        .hudRow()
+                    }
+                } header: {
+                    HUDSectionTitle(text: "What your PC has told this phone")
+                } footer: {
+                    SettingsNote("Semantic observations, not a log. Anywhere precise is withheld.")
+                }
+            }
+        }
+        .hudList()
+    }
+
+    /// The last few, with anything sensitive described rather than printed.
+    private var recent: [OwnerEvent] { Array(timeline.kept.prefix(12)) }
+
+    private var exchange: SettingsStatus {
+        if timeline.state.problem != nil { return .attention("Last attempt did not go") }
+        if !model.link.isOnline { return .configured("Waiting for the PC") }
+        return timeline.state.lastSync == nil ? .ready("Ready") : .live("Automatic")
+    }
+
+    /// One event as a line the owner would recognise.
+    ///
+    /// Deliberately not the payload. A sensitive event names what happened and the place the owner
+    /// chose to call it, and nothing else - a diagnostic page is exactly the sort of screen
+    /// somebody photographs to ask for help with.
+    private static func say(_ event: OwnerEvent) -> String {
+        let place = event.value("place")
+        let app = event.value("app")
+        let device = event.value("device")
+
+        switch event.type {
+        case OwnerEventTypes.arrived: return "Arrived\(place.map { " at \($0)" } ?? "")"
+        case OwnerEventTypes.left: return "Left\(place.map { " \($0)" } ?? "")"
+        case OwnerEventTypes.deviceWorked: return "Worked \(device ?? "a device")"
+        case OwnerEventTypes.nodeUp: return "\(event.value("name") ?? "A node") came online"
+        case OwnerEventTypes.nodeDown: return "\(event.value("name") ?? "A node") went offline"
+        case OwnerEventTypes.asked: return "A conversation"
+        default:
+            if let app { return app }
+            return event.type
+        }
+    }
+
+    private static func when(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
     }
 }
