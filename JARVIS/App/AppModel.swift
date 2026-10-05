@@ -926,6 +926,10 @@ final class AppModel: ObservableObject {
         timeline.identify(as: pc?.deviceId ?? "")
         await timeline.sync(exchanging)
 
+        // And the places the owner goes, so this phone can name where it is with the desk off -
+        // programme §1C. On every connection, incrementally, and with no button anywhere.
+        await pullPlaces()
+
         // What this phone may work by itself while the PC is off.
         //
         // Here, on every connection, rather than when a screen that shows devices happens to open -
@@ -971,6 +975,66 @@ final class AppModel: ObservableObject {
     ///
     /// The seam the timeline client is built against, so it can be tested without an app, a PC or
     /// a network - and so the one place that knows how to reach the PC stays here.
+    /// Catches this phone's place and routine subset up with the PC - programme §1C and §2B.
+    ///
+    /// Incremental by revision, so an ordinary connection costs one request that returns nothing.
+    /// Places first and routines second, because a routine is about a place: pulling them the
+    /// other way round would briefly hold a pattern about somewhere this phone could not name.
+    ///
+    /// Routines are asked for only when the places moved, since the PC stamps both with the same
+    /// revision - an unchanged place book means an unchanged routine model, and asking anyway
+    /// would be a request per connection that always returns the same two dozen rows.
+    func pullPlaces() async {
+        let book = MobilePlaceBook.shared
+
+        do {
+            var more = true
+            var moved = false
+
+            // Looped, because a phone that has been away for a long time gets its places in
+            // batches; bounded by the PC's own batch size so a loop cannot run away.
+            var rounds = 0
+
+            while more, rounds < 8 {
+                rounds += 1
+
+                let reply = try await exchanging("places.pull", ["since": book.revision])
+                let rows = (reply["rows"] as? [[String: Any]] ?? []).map { row in
+                    row.reduce(into: [String: String]()) { into, pair in
+                        into[pair.key] = pair.value as? String ?? String(describing: pair.value)
+                    }
+                }
+
+                let through = (reply["through"] as? NSNumber)?.int64Value
+                let changed = book.apply(rows, through: through)
+
+                moved = moved || changed > 0
+                more = (reply["more"] as? Bool) ?? false
+
+                if rows.isEmpty { break }
+            }
+
+            guard moved || MobileRoutineBook.shared.revision < book.revision else { return }
+
+            let patterns = try await exchanging("routines.pull", ["since": MobileRoutineBook.shared.revision])
+            let rows = (patterns["rows"] as? [[String: Any]] ?? []).map { row in
+                row.reduce(into: [String: String]()) { into, pair in
+                    into[pair.key] = pair.value as? String ?? String(describing: pair.value)
+                }
+            }
+
+            if !rows.isEmpty {
+                MobileRoutineBook.shared.replace(
+                    rows, revision: (patterns["revision"] as? NSNumber)?.int64Value ?? book.revision)
+            }
+        } catch {
+            // The cursor has not moved, so the next connection asks for the same thing again. A
+            // failed place pull must not be allowed to fail the whole refresh: the smart-home
+            // bindings and the timeline matter more and are pulled around it.
+            book.failed(MobilePlaceBook.because(error))
+        }
+    }
+
     var exchanging: (String, [String: Any]) async throws -> [String: Any] {
         { [weak self] kind, body in
             guard let self else { throw BridgeError.closed }
@@ -1176,6 +1240,20 @@ final class AppModel: ObservableObject {
                 power: PowerReporter.shared.readings,
                 queued: timeline.state.queued,
                 behind: timeline.state.pcRevision - timeline.state.cursor)
+
+            answer(said, spoken: spoken)
+            fileTurn(request, said)
+            return true
+
+        // Where the owner is, or was - programme §1E. Answered from this phone's own fix, its own
+        // record of the day and the places and patterns the PC published to it, so it works with
+        // the desk switched off and needs no model and no network.
+        case .whereabouts(let asked, let named):
+            let said = PlaceAnswers.answer(asked, named: named, from: PlaceAnswers.Evidence(
+                fix: whereabouts.fix,
+                places: MobilePlaceBook.shared.places,
+                visits: MobileDay.shared.visits,
+                routines: MobileRoutineBook.shared.routines))
 
             answer(said, spoken: spoken)
             fileTurn(request, said)

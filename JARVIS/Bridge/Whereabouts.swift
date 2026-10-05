@@ -32,6 +32,37 @@ struct Whereabouts: Codable, Equatable {
     }
 }
 
+extension Whereabouts {
+    /// The questions about whereabouts this phone answers for itself - programme §1E.
+    ///
+    /// A closed list rather than free text, because each one is answered from different evidence:
+    /// where the owner is comes from the current fix, when they arrived comes from this phone's
+    /// own record of the day, and what they usually do comes from the learned patterns. A single
+    /// "location question" case would have the answer layer re-deciding which was asked.
+    enum Question: Equatable {
+        /// "Where am I?"
+        case whereAmI
+
+        /// "Am I home?", "am I at university?"
+        case amIAt
+
+        /// "When did I get here?"
+        case arrived
+
+        /// "When did I leave home?"
+        case left
+
+        /// "How long have I been here?"
+        case howLong
+
+        /// "Where was I earlier?"
+        case earlier
+
+        /// "Where do I normally go around this time?" - a pattern, and worded as one.
+        case usually
+    }
+}
+
 /// What is worth keeping, and how much of it, decided without a location manager in the way.
 ///
 /// The rules are the same ones the PC's own trail applies, applied here as well: a phone with no
@@ -113,6 +144,13 @@ final class LocationReporter: NSObject, ObservableObject, CLLocationManagerDeleg
     private let send: (String, [String: Any]) async throws -> Void
     private var queue: [Whereabouts] = []
     private var last: Whereabouts?
+
+    /// The most recent fix, whether or not it was worth queueing.
+    ///
+    /// Published because every local answer about where the owner is depends on it, and separate
+    /// from `last` because that one is about what has been *sent* - a reading too close to the
+    /// previous one to be worth the radio is still the best answer to "where am I".
+    @Published private(set) var fix: Whereabouts?
     private var flushing = false
 
     /// - Parameter send: puts one request on the bridge. Injected so this can be tested without one.
@@ -185,7 +223,16 @@ final class LocationReporter: NSObject, ObservableObject, CLLocationManagerDeleg
             for reading in readings where WhereaboutsRules.worthKeeping(reading, after: last) {
                 queue = WhereaboutsRules.queue(queue, adding: reading)
                 last = reading
+
+                // And what it means locally, so the phone can answer "when did I get here" with
+                // the PC switched off - programme §1D and §2A. This draws no conclusion the PC
+                // will also draw: the PC derives arrivals from the trail, and this is only the
+                // shape of the day kept for answering here.
+                MobileDay.shared.saw(reading, in: MobilePlaceBook.shared.places)
             }
+
+            // The current fix, kept so a question asked a minute later needs no new reading.
+            if let newest = readings.max(by: { $0.at < $1.at }) { fix = newest }
 
             waiting = queue.count
             Self.writeQueue(queue)

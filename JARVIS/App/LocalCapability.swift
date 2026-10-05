@@ -60,6 +60,32 @@ enum LocalCapability: Equatable {
     /// exactly what the router does with it.
     case status
 
+    /// A question about where the owner is, or was - programme §1E.
+    ///
+    /// Here by exactly the same test as the battery: the phone is the only node that can know
+    /// where its owner is, however awake the PC is. With the PC off this is the only node that can
+    /// answer at all, and with the PC on it is still the node holding the fix - so routing it
+    /// through the PC would mean sending a coordinate across the house to have a name sent back.
+    ///
+    /// `named` is the place the sentence asked about, for "am I at university"; nil for "where am
+    /// I". Nothing here decides whether that place is known: the answer layer resolves it against
+    /// the subset this phone actually holds and says so when it does not.
+    case whereabouts(asked: Whereabouts.Question, named: String?)
+
+    /// Whether this phone answers this better than the PC would, so it should not be routed away.
+    ///
+    /// True for exactly one thing today, and the test is specific rather than general: the PC's
+    /// answer would rest on something this phone sent it earlier, so the round trip can only
+    /// return a staler version of what is already here. A battery is not in this class even though
+    /// the phone reads its own - the PC holds every node's readings, so "how is everything doing"
+    /// is genuinely better answered there.
+    var answeredBestHere: Bool {
+        switch self {
+        case .whereabouts: return true
+        default: return false
+        }
+    }
+
     /// The capability's name, as the PC's own tool catalogue would write it.
     var action: String {
         switch self {
@@ -68,6 +94,7 @@ enum LocalCapability: Equatable {
         case .power: return "device.power.battery"
         case .status: return "node.status"
         case .deviceToggle: return "devices.toggle"
+        case .whereabouts: return "owner.whereabouts"
         case .device(_, let command):
             switch command {
             case .on: return "devices.power.on"
@@ -119,6 +146,12 @@ enum LocalCapability: Equatable {
         // particular - which is a narrower answer than the one that was asked for.
         if isAskingForStatus(words) { return .status }
 
+        // Where the owner is, next. Asked before the battery rules because "where is my phone" is
+        // a question about a place and not about a charge, and before the wake rules because
+        // "am I home" carries neither a wake word nor a machine word and would fall through to
+        // the PC - which is the one node that cannot answer it.
+        if let asking = aWhereaboutsQuestion(words, sentence) { return asking }
+
         // A battery, next. "Is my phone charging" carries both a machine word and a power word,
         // so a wake rule asked before this one would read it as a request to switch something on -
         // and the question is one only this phone can answer at all.
@@ -160,6 +193,88 @@ enum LocalCapability: Equatable {
     /// Narrow on purpose. A bare "status" or "report" is it, and so is asking whether everything is
     /// all right; naming a machine is not, because that is a question about the machine and the
     /// rule below answers it better. Anything else goes to the PC, where the understanding is.
+    /// Which question about whereabouts a sentence is asking, if it is asking one.
+    ///
+    /// Shaped as a ladder from most specific to least, because the phrases overlap: "when did I
+    /// leave home" contains "home", and a rule that looked for "home" first would answer the
+    /// wrong question with the right place in it.
+    private static func aWhereaboutsQuestion(
+        _ words: [String], _ sentence: String
+    ) -> LocalCapability? {
+        let owner = ["i", "me", "my", "am"]
+
+        guard words.contains(where: { owner.contains($0) }) || words.contains("where") else { return nil }
+
+        // "When did I leave home", "what time did I leave".
+        if words.contains("leave") || words.contains("left") {
+            return .whereabouts(asked: .left, named: placeNamed(words, sentence))
+        }
+
+        // "When did I get here", "when did I arrive", "what time did I get in".
+        if words.contains("arrive") || words.contains("arrived")
+            || (words.contains("get") && (words.contains("here") || words.contains("in")))
+            || (words.contains("got") && (words.contains("here") || words.contains("in"))) {
+            return .whereabouts(asked: .arrived, named: placeNamed(words, sentence))
+        }
+
+        // "How long have I been here".
+        if words.contains("long") && (words.contains("here") || words.contains("been")) {
+            return .whereabouts(asked: .howLong, named: nil)
+        }
+
+        // "Where was I earlier", "where have I been today".
+        if words.contains("where")
+            && (words.contains("was") || words.contains("been"))
+            && (words.contains("earlier") || words.contains("today") || words.contains("have")) {
+            return .whereabouts(asked: .earlier, named: nil)
+        }
+
+        // "Where do I normally go around now", "where am I usually at this time".
+        if words.contains("normally") || words.contains("usually") || words.contains("usual") {
+            return .whereabouts(asked: .usually, named: nil)
+        }
+
+        // "Am I home", "am I at university" - a yes or no about one place.
+        if words.contains("am"), let named = placeNamed(words, sentence) {
+            return .whereabouts(asked: .amIAt, named: named)
+        }
+
+        // "Where am I".
+        if words.contains("where") && (words.contains("am") || words.contains("i")) {
+            return .whereabouts(asked: .whereAmI, named: nil)
+        }
+
+        return nil
+    }
+
+    /// The place a sentence names, as the owner said it, or nil.
+    ///
+    /// Deliberately not matched against the held places here. This layer decides what was asked;
+    /// whether that place is one JARVIS knows is the answer layer's business, and conflating the
+    /// two would make "am I at the dentist" unanswerable rather than answered with "I don't know
+    /// anywhere called the dentist".
+    private static func placeNamed(_ words: [String], _ sentence: String) -> String? {
+        // Everything after "at", "to" or "from" is the name; "home" is a name on its own because
+        // nobody says "at home" when they mean the place called Home.
+        let markers = ["at", "to", "from", "in"]
+
+        if let marker = words.lastIndex(where: { markers.contains($0) }), marker + 1 < words.count {
+            let rest = words[(marker + 1)...]
+                .filter { !["the", "a", "my"].contains($0) }
+                .joined(separator: " ")
+
+            if !rest.isEmpty { return rest }
+        }
+
+        for word in ["home", "house", "work", "university", "uni", "college", "office"] where words.contains(word) {
+            return word
+        }
+
+        _ = sentence
+
+        return nil
+    }
+
     private static func isAskingForStatus(_ words: [String]) -> Bool {
         let machines = ["pc", "computer", "workstation", "desktop", "rig", "tower"]
         guard !words.contains(where: { machines.contains($0) }) else { return false }

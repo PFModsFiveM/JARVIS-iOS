@@ -271,6 +271,12 @@ enum MobileCapabilities {
             // battery, a wake, a machine's own state - has one, and it is this phone.
             let mine: MobileLane = local.isADeviceCommand ? .directDevice(local) : .localMobile(local)
 
+            // Some questions this phone answers better than the PC can, and preferring the PC for
+            // them would be a round trip to get a worse answer. Where the owner is, is the clear
+            // case: the PC's belief rests on the last fix this phone sent it, and this phone has a
+            // fresher one in hand. So it stays here whether or not the desk is awake.
+            if local.answeredBestHere { return MobileDecision(mine) }
+
             return state.pcAnswering
                 ? MobileDecision(.pcPrime, fallback: mine)
                 : MobileDecision(mine)
