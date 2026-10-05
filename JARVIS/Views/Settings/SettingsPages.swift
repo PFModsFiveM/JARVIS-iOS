@@ -199,6 +199,8 @@ private struct MobileCapabilitiesPage: View {
 
     var body: some View {
         List {
+            AvailabilityPanel()
+
             Section {
                 StatusRow(title: "On its own", status: .ready("\(MobileCapabilities.standalone(state).count) of \(thisPhone.count)"))
                 StatusRow(title: state.pcName, status: state.pcAnswering ? .live("Answering") : .configured("Not answering"))
@@ -770,6 +772,45 @@ private struct AboutPage: View {
     }
 }
 
+
+// MARK: - What is available right now - programme §4
+
+/// Which subsystems can be used, whether or not PC-PRIME is answering.
+///
+/// The panel exists because "JARVIS is offline" is almost never true. With the PC asleep the smart
+/// home still works, the footage is still readable, the phone still knows where it is, and a
+/// general question can still be answered if the owner has given this phone a provider. A single
+/// status collapsing all of that into one word would be wrong in the most useful direction.
+struct AvailabilityPanel: View {
+    @EnvironmentObject var model: AppModel
+    @ObservedObject private var footage = FootageModel.shared
+
+    var body: some View {
+        Section {
+            ForEach(MobileStatus.availability(model.nodeState, footageHeld: !footage.incidents.isEmpty)) { row in
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(row.title).foregroundStyle(HUD.text)
+                        if let detail = row.state.detail {
+                            Text(detail).font(.caption).foregroundStyle(HUD.dim)
+                        }
+                    }
+                    Spacer(minLength: 12)
+                    Text(row.state.word)
+                        .font(.caption.weight(.semibold).monospaced())
+                        .foregroundStyle(row.state.usable ? HUD.good : HUD.dim)
+                }
+                .hudRow()
+            }
+        } header: {
+            HUDSectionTitle(text: "Available now")
+        } footer: {
+            SettingsNote(model.link.isOnline
+                ? "Everything your PC brings is available as well."
+                : "Your PC isn't answering. Everything marked available still works without it.")
+        }
+    }
+}
 
 // MARK: - Smart home independence - programme §2
 

@@ -70,6 +70,10 @@ enum IntentStandalone {
             guard MachineLink.shared.isPaired, let report = await MachineLink.shared.ask(force: true) else { return nil }
             return MobilePhrases.onButCannotSay(report.machine)
 
+        case .status:
+            PowerReporter.shared.read()
+            return MobileStatus.line(AppModel.shared.nodeState, power: PowerReporter.shared.readings)
+
         case .wake:
             // Waking is `WakePCIntent`'s, which Siri already offers by name and which reports what
             // it actually sent. Answering it here would be a second path to the same packet.

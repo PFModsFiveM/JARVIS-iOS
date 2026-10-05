@@ -1156,6 +1156,22 @@ final class AppModel: ObservableObject {
             answer(said, spoken: spoken)
             fileTurn(request, said)
             return true
+
+        // How the whole of JARVIS is doing - programme §58. The PC answers it better when it is
+        // up, because it can see every node's readings; with the PC off this phone is the only
+        // node that can say which nodes are answering, so it says what it knows.
+        case .status:
+            PowerReporter.shared.read()
+
+            let said = MobileStatus.line(
+                nodeState,
+                power: PowerReporter.shared.readings,
+                queued: timeline.state.queued,
+                behind: timeline.state.pcRevision - timeline.state.cursor)
+
+            answer(said, spoken: spoken)
+            fileTurn(request, said)
+            return true
         }
     }
 

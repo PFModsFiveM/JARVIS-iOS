@@ -144,6 +144,36 @@ enum MobilePhrases {
 
     // MARK: The register, as a list
 
+    // MARK: Status - programme §58
+
+    static func pcIsAnswering(_ machine: String) -> String {
+        "\(machine) is answering, sir."
+    }
+
+    static func pcIsNotAnswering(_ machine: String, canWake: Bool) -> String {
+        canWake
+            ? "\(machine) isn't answering, sir. I can wake it from here."
+            : "\(machine) isn't answering, sir."
+    }
+
+    static func houseUnreachable() -> String {
+        "Nothing in the house can be switched from here at the moment, sir."
+    }
+
+    static func waitingToSync(_ count: Int) -> String {
+        count == 1
+            ? "One observation is waiting to reach your PC, sir."
+            : "\(count) observations are waiting to reach your PC, sir."
+    }
+
+    static func catchingUp(_ count: Int) -> String {
+        "I'm \(count) behind what your PC has, sir, and catching up."
+    }
+
+    static func nothingWantsAttention() -> String {
+        "Nothing wants attention, sir."
+    }
+
     /// Every phrase, rendered with stand-in values.
     ///
     /// Here so the register can be asserted across all of them at once rather than one test per
@@ -179,7 +209,15 @@ enum MobilePhrases {
             switchedOff("Bedroom Light"),
             pressed("Desk Lamp"),
             sentButUnconfirmed("Bedroom Light", ""),
-            sentButUnconfirmed("Bedroom Light", "On (unconfirmed)")
+            sentButUnconfirmed("Bedroom Light", "On (unconfirmed)"),
+            pcIsAnswering("DOM-PC"),
+            pcIsNotAnswering("DOM-PC", canWake: true),
+            pcIsNotAnswering("DOM-PC", canWake: false),
+            houseUnreachable(),
+            waitingToSync(1),
+            waitingToSync(14),
+            catchingUp(40),
+            nothingWantsAttention()
         ]
     }
 }

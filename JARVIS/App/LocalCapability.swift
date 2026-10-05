@@ -52,12 +52,21 @@ enum LocalCapability: Equatable {
     /// whether the named thing exists: the reporter matches it against what it actually read.
     case power(target: String?)
 
+    /// How the whole of JARVIS is doing - programme §58.
+    ///
+    /// Here by the same test as the others: with the PC off, the only node that can say which
+    /// nodes are answering is one that is. The PC answers it better when it is up - it can see
+    /// every node's readings - so this is the fallback rather than the first choice, which is
+    /// exactly what the router does with it.
+    case status
+
     /// The capability's name, as the PC's own tool catalogue would write it.
     var action: String {
         switch self {
         case .wake: return "device.power.wake"
         case .state: return "device.power.state"
         case .power: return "device.power.battery"
+        case .status: return "node.status"
         case .deviceToggle: return "devices.toggle"
         case .device(_, let command):
             switch command {
@@ -75,7 +84,7 @@ enum LocalCapability: Equatable {
     var isADeviceCommand: Bool {
         switch self {
         case .device, .deviceToggle: return true
-        case .wake, .state, .power: return false
+        case .wake, .state, .power, .status: return false
         }
     }
 
@@ -83,6 +92,7 @@ enum LocalCapability: Equatable {
     var target: String? {
         switch self {
         case .wake(let target), .state(let target), .power(let target): return target
+        case .status: return nil
         case .device(let id, _), .deviceToggle(let id): return id
         }
     }
@@ -104,7 +114,12 @@ enum LocalCapability: Equatable {
 
         guard !words.isEmpty else { return nil }
 
-        // A battery, first. "Is my phone charging" carries both a machine word and a power word,
+        // The whole of JARVIS, first. "Status" is in the machine-question word list, so a rule
+        // asked before this one would read "jarvis, status" as a question about the PC in
+        // particular - which is a narrower answer than the one that was asked for.
+        if isAskingForStatus(words) { return .status }
+
+        // A battery, next. "Is my phone charging" carries both a machine word and a power word,
         // so a wake rule asked before this one would read it as a request to switch something on -
         // and the question is one only this phone can answer at all.
         if let battery = aBatteryQuestion(words) { return battery }
@@ -138,6 +153,30 @@ enum LocalCapability: Equatable {
         }
 
         return .wake(target: named(in: words, among: machines))
+    }
+
+    /// Whether the sentence is asking how the whole of JARVIS is doing.
+    ///
+    /// Narrow on purpose. A bare "status" or "report" is it, and so is asking whether everything is
+    /// all right; naming a machine is not, because that is a question about the machine and the
+    /// rule below answers it better. Anything else goes to the PC, where the understanding is.
+    private static func isAskingForStatus(_ words: [String]) -> Bool {
+        let machines = ["pc", "computer", "workstation", "desktop", "rig", "tower"]
+        guard !words.contains(where: { machines.contains($0) }) else { return false }
+
+        let said = Set(words)
+
+        // "status", "report", "sitrep" on their own, with or without a wake word in front.
+        let bare = Set(["status", "report", "sitrep"])
+        if !said.isDisjoint(with: bare) { return true }
+
+        // "is everything all right", "how are things", "anything wrong".
+        let subjects = Set(["everything", "things", "anything", "all"])
+        let judgements = Set(["right", "alright", "okay", "ok", "well", "wrong", "good", "fine"])
+
+        if !said.isDisjoint(with: subjects) && !said.isDisjoint(with: judgements) { return true }
+
+        return said.contains("how") && !said.isDisjoint(with: subjects)
     }
 
     /// Whether a sentence is asking what a machine is doing, rather than telling it to do something.
