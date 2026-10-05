@@ -78,6 +78,16 @@ enum IntentStandalone {
             // Waking is `WakePCIntent`'s, which Siri already offers by name and which reports what
             // it actually sent. Answering it here would be a second path to the same packet.
             return nil
+
+        // Where the owner is - programme §1E. Answered out here as well as in the app, because
+        // "Siri, ask JARVIS where I am" is the case this is most useful in: the phone is in a
+        // pocket and the app is not open.
+        case .whereabouts(let asked, let named):
+            return PlaceAnswers.answer(asked, named: named, from: PlaceAnswers.Evidence(
+                fix: AppModel.shared.whereabouts.fix,
+                places: MobilePlaceBook.shared.places,
+                visits: MobileDay.shared.visits,
+                routines: MobileRoutineBook.shared.routines))
         }
     }
 

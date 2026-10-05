@@ -111,7 +111,7 @@ enum LocalCapability: Equatable {
     var isADeviceCommand: Bool {
         switch self {
         case .device, .deviceToggle: return true
-        case .wake, .state, .power, .status: return false
+        case .wake, .state, .power, .status, .whereabouts: return false
         }
     }
 
@@ -121,6 +121,11 @@ enum LocalCapability: Equatable {
         case .wake(let target), .state(let target), .power(let target): return target
         case .status: return nil
         case .device(let id, _), .deviceToggle(let id): return id
+
+        // The place the question named, when it named one. "Where am I" names nothing, which is
+        // not the same as naming nothing in particular - hence the nil rather than an empty
+        // string, which is what every other case here means by nil too.
+        case .whereabouts(_, let named): return named
         }
     }
 
