@@ -209,30 +209,52 @@ enum LocalCapability: Equatable {
     /// Narrow on purpose. A bare "status" or "report" is it, and so is asking whether everything is
     /// all right; naming a machine is not, because that is a question about the machine and the
     /// rule below answers it better. Anything else goes to the PC, where the understanding is.
+    /// Words that are a place on their own, so "this is home" needs no further qualification.
+    ///
+    /// A closed list, and it exists because of a test failure rather than in anticipation of one:
+    /// the first version accepted any "this is X" and duly read "this is ridiculous" as an
+    /// instruction to rename the owner's house. Anything outside this list has to say the word
+    /// "place", which is the difference between a remark and an instruction.
+    private static let placeWords = [
+        "home", "house", "work", "office", "university", "uni", "college", "school",
+        "gym", "studio", "workshop", "flat", "apartment"
+    ]
+
     /// The owner naming where they are, if that is what the sentence does.
     ///
-    /// Narrow on purpose. "This is home" and "call this place the workshop" are unmistakable;
-    /// anything looser would catch "this is ridiculous" and quietly rename the owner's house.
+    /// Three forms, all unmistakable. A bare "this is X" is accepted only when X is a word that is
+    /// a place on its own; everything else must say "place", because renaming somewhere is a
+    /// change and a misheard remark must not make one.
     private static func aPlaceBeingNamed(_ words: [String]) -> LocalCapability? {
-        // "This is <name>", where the sentence is about here rather than about anything else.
-        if words.count >= 3, words[0] == "this", words[1] == "is" {
-            let name = words.dropFirst(2).filter { !["the", "a", "my"].contains($0) }.joined(separator: " ")
+        let filler = ["the", "a", "an", "my", "our", "spot"]
 
-            return name.isEmpty ? nil : .namePlace(name: name)
+        // "This place is <name>" - explicit, so any name is allowed.
+        if words.count >= 4, words[0] == "this", words[1] == "place", words[2] == "is" {
+            return naming(words.dropFirst(3), without: filler)
         }
 
-        // "Call this place <name>", "call this <name>".
-        if words.first == "call", words.contains("this") {
-            guard let marker = words.firstIndex(of: "this") else { return nil }
+        // "This is <place word>" - the common phrasing, and only for a word that is itself a place.
+        if words.count >= 3, words[0] == "this", words[1] == "is" {
+            let said = words.dropFirst(2).filter { !filler.contains($0) }
 
-            let rest = words[(marker + 1)...]
-                .filter { !["place", "the", "a", "my", "spot"].contains($0) }
-                .joined(separator: " ")
+            guard said.count == 1, let word = said.first, placeWords.contains(word) else { return nil }
 
-            return rest.isEmpty ? nil : .namePlace(name: rest)
+            return .namePlace(name: word)
+        }
+
+        // "Call this place <name>" - explicit, so any name is allowed.
+        if words.first == "call", let marker = words.firstIndex(of: "place"),
+           words.dropFirst().prefix(while: { $0 != "place" }).contains("this") {
+            return naming(words[(marker + 1)...], without: filler)
         }
 
         return nil
+    }
+
+    private static func naming(_ said: ArraySlice<String>, without filler: [String]) -> LocalCapability? {
+        let name = said.filter { !filler.contains($0) }.joined(separator: " ")
+
+        return name.isEmpty ? nil : .namePlace(name: name)
     }
 
     /// Which question about whereabouts a sentence is asking, if it is asking one.

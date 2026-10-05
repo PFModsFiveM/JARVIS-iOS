@@ -570,13 +570,22 @@ final class PlaceNamingTests: XCTestCase {
         XCTAssertEqual(named("this is home"), "home")
         XCTAssertEqual(named("this is my house"), "house")
         XCTAssertEqual(named("call this place university"), "university")
-        XCTAssertEqual(named("call this the workshop"), "workshop")
+        XCTAssertEqual(named("call this place the workshop"), "workshop")
+        XCTAssertEqual(named("this place is the dentist"), "dentist")
     }
 
     /// The reason the recogniser is narrow rather than clever.
+    ///
+    /// The first version took any "this is X" and read "this is ridiculous" as an instruction to
+    /// rename the owner's house. A bare "this is X" is now accepted only when X is a word that is
+    /// a place on its own; anything else has to say "place", which is what separates an
+    /// instruction from a remark.
     func testAnOrdinaryRemarkDoesNotRenameAnywhere() {
         XCTAssertNil(named("this is ridiculous"))
+        XCTAssertNil(named("this is going well"))
+        XCTAssertNil(named("this is a disaster"))
         XCTAssertNil(named("call mum"))
+        XCTAssertNil(named("call this a day"))
         XCTAssertNil(named("where am I"))
         XCTAssertNil(named("this is"))
     }
