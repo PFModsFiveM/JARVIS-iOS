@@ -930,6 +930,16 @@ final class AppModel: ObservableObject {
         // programme §1C. On every connection, incrementally, and with no button anywhere.
         await pullPlaces()
 
+        // What the owner's words mean, so this phone can resolve "the bedroom lamp" with the desk
+        // asleep - priority §4D. In the path of every command, which is why it is pulled rather
+        // than asked for.
+        await pullAliases()
+
+        // And what has already been said, so this phone does not say it again - priority §1D.
+        // Reported first: something this phone said while the PC was unreachable is the one fact
+        // the PC cannot have.
+        await settleDelivery()
+
         // A few more of JARVIS's own phrases, so the voice survives the desk going to sleep.
         await warmTheVoiceCache()
 
@@ -1049,6 +1059,107 @@ final class AppModel: ObservableObject {
             // bindings and the timeline matter more and are pulled around it.
             book.failed(MobilePlaceBook.because(error))
         }
+    }
+
+    /// What the owner's words mean, pulled incrementally - priority §4D and §6A.
+    ///
+    /// Separate from the place pull despite looking the same, because the two fail independently:
+    /// a phone whose vocabulary is stale can still say where it is, and a phone with stale places
+    /// can still switch a light the owner named. Folding them together would mean one failure took
+    /// both.
+    func pullAliases() async {
+        let book = MobileAliases.shared
+
+        do {
+            let reply = try await exchanging("aliases.pull", ["since": book.revision])
+
+            let rows = (reply["aliases"] as? [[String: Any]] ?? []).compactMap(Self.alias)
+            let gone = (reply["forgotten"] as? [[String: Any]] ?? [])
+                .compactMap { $0["said"] as? String }
+
+            book.apply(
+                rows,
+                forgotten: gone,
+                through: (reply["revision"] as? NSNumber)?.int64Value ?? book.revision)
+        } catch {
+            // The cursor has not moved, so the next connection asks again. An older PC that does
+            // not know the request answers "failed", and this quietly keeps what it already had -
+            // which is the right behaviour, not a silent failure: the words the phone knows are
+            // still the words the owner used.
+            book.couldNotCatchUp(MobilePlaceBook.because(error))
+        }
+    }
+
+    /// One row of `aliases.pull`, refusing anything that is not a whole alias.
+    ///
+    /// Tolerant of fields it does not know and strict about the four it needs, so a newer PC can
+    /// add to the reply without this build dropping every row.
+    private static func alias(_ row: [String: Any]) -> MobileAlias? {
+        guard let said = row["said"] as? String, !said.isEmpty,
+              let entity = row["entity"] as? String, !entity.isEmpty else { return nil }
+
+        return MobileAlias(
+            said: MobileAliases.normalise(said),
+            entity: entity,
+            kind: MobileEntityKind(rawValue: row["kind"] as? String ?? "") ?? .unknown,
+            strength: MobileEvidence(rawValue: row["strength"] as? String ?? "") ?? .weak,
+            trusted: (row["trusted"] as? Bool) ?? false,
+            confidence: (row["confidence"] as? NSNumber)?.doubleValue ?? 0,
+            count: (row["count"] as? NSNumber)?.intValue ?? 1,
+            revision: (row["revision"] as? NSNumber)?.int64Value ?? 0)
+    }
+
+    /// Reports what this phone said while the PC was away, then learns what it missed - §1D.
+    ///
+    /// The order is the whole of it. This phone's own record of what it said is the only copy
+    /// while the PC is unreachable; pulling first and reporting second would mean a result the
+    /// phone had already spoken came back as Ready and could be spoken again.
+    func settleDelivery() async {
+        let book = MobileDelivery.shared
+        let me = pc?.deviceId ?? ""
+
+        for resultId in book.unreported() {
+            do {
+                let reply = try await exchanging("delivery.done", ["result": resultId, "way": "Spoken"])
+
+                if (reply["accepted"] as? Bool) == true {
+                    book.reported(resultId, by: me)
+                }
+            } catch {
+                // Kept. It is reported on the next connection, and until then this phone's own
+                // record is what stops it repeating itself.
+                book.couldNotCatchUp(MobilePlaceBook.because(error))
+            }
+        }
+
+        do {
+            let reply = try await exchanging("delivery.pull", ["since": book.revision])
+
+            let rows = (reply["results"] as? [[String: Any]] ?? []).compactMap(Self.result)
+
+            book.apply(rows, through: (reply["revision"] as? NSNumber)?.int64Value ?? book.revision)
+        } catch {
+            book.couldNotCatchUp(MobilePlaceBook.because(error))
+        }
+    }
+
+    /// One row of `delivery.pull`. Deliberately has no field for the words.
+    ///
+    /// The PC does not send them and this would have nowhere to put them if it did. A phone
+    /// catching up is learning what not to say, and the only use it would have for the sentence is
+    /// to say it.
+    private static func result(_ row: [String: Any]) -> MobileResult? {
+        guard let id = row["result"] as? String, !id.isEmpty else { return nil }
+
+        return MobileResult(
+            id: id,
+            turn: row["turn"] as? String ?? "",
+            conversation: row["conversation"] as? String ?? "",
+            task: row["task"] as? String,
+            state: MobileDeliveryState(rawValue: row["state"] as? String ?? "") ?? .ready,
+            by: row["by"] as? String,
+            revision: (row["revision"] as? NSNumber)?.int64Value ?? 0,
+            because: row["because"] as? String ?? "")
     }
 
     var exchanging: (String, [String: Any]) async throws -> [String: Any] {

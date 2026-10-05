@@ -20,6 +20,8 @@ struct SettingsPage: View {
             case .standbyLights: StandbyLightsPage()
             case .whereabouts: WhereaboutsPage()
             case .knownPlaces: KnownPlacesPage()
+            case .notices: NoticeCategoriesPage()
+            case .vocabulary: VocabularyPage()
             case .waking: WakingPage()
             case .reaching: ReachingPage()
             case .smartHome: SmartHomePage()
@@ -1236,5 +1238,134 @@ private struct SharedJarvisPage: View {
         formatter.dateStyle = .short
         formatter.timeStyle = .short
         return formatter.string(from: date)
+    }
+}
+
+/// Which kinds of notification reach this phone - priority §7A and §7B.
+///
+/// One screen, because the brief asks for one canonical place and because the alternative is what
+/// this app had: notification behaviour decided by whichever screen happened to produce each kind.
+/// An owner who wants fewer interruptions should not have to find them.
+private struct NoticeCategoriesPage: View {
+    @ObservedObject private var settings = NoticeSettings.shared
+
+    var body: some View {
+        List {
+            Section {
+                SettingsNote(
+                    "Each of these is a kind of thing worth telling you about. Turning one off "
+                    + "stops that kind reaching this phone; it does not stop JARVIS noticing.")
+            }
+
+            ForEach(MobileNoticeCategory.allCases) { category in
+                Section {
+                    if category.optional {
+                        Toggle(isOn: Binding(
+                            get: { settings.wants(category) },
+                            set: { settings.set(category, wanted: $0) })) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(category.name)
+                                Text(category.detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    } else {
+                        // Security, which cannot be switched off. Shown as a row rather than a
+                        // disabled toggle, because a toggle the owner cannot move is a toggle they
+                        // try to move.
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(category.name)
+                            Text(category.detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text("Always on. This is the one kind where not telling you could matter.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    if settings.changed(category) {
+                        Button("Use the default") { settings.useDefault(category) }
+                            .font(.caption)
+                    }
+                }
+            }
+
+            Section {
+                SettingsNote(
+                    "Syncing, routine suggestions and learning are off here by default. You can "
+                    + "see all of them in the app whenever you like; a notification about them "
+                    + "would mostly be a buzz you learn to ignore.")
+            } header: {
+                HUDSectionTitle(text: "Why some are off")
+            }
+        }
+        .navigationTitle("What I tell you about")
+    }
+}
+
+/// The owner's own words for things, and how sure JARVIS is of each - priority §6A and §6B.
+///
+/// Read-only on purpose. The way to change what a word means is to correct JARVIS when it gets it
+/// wrong, which is both easier than finding this screen and the thing that produces the strongest
+/// evidence. This is here so the owner can see what it believes and why.
+private struct VocabularyPage: View {
+    @ObservedObject private var book = MobileAliases.shared
+
+    var body: some View {
+        List {
+            if book.aliases.isEmpty {
+                Section {
+                    SettingsNote(
+                        "Nothing yet. When you correct me - \"no, the bedroom light\" - I remember "
+                        + "the word you used, and both this phone and your PC use it from then on.")
+                }
+            }
+
+            ForEach(book.aliases) { alias in
+                Section {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("\u{201C}\(alias.said)\u{201D}")
+                            .font(.body.weight(.medium))
+
+                        Text(alias.entity)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        // The provenance rather than the conclusion. "It means the bedroom light"
+                        // is uninteresting; "because you said so, twice" is what lets the owner
+                        // decide whether to agree.
+                        Text(because(alias))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            if let failed = book.failed {
+                Section {
+                    SettingsNote("Last time I tried to catch up: \(failed)")
+                } header: {
+                    HUDSectionTitle(text: "Syncing")
+                }
+            }
+        }
+        .navigationTitle("What your words mean")
+    }
+
+    private func because(_ alias: MobileAlias) -> String {
+        let how = switch alias.strength {
+        case .veryStrong: "because you told me"
+        case .strong: "from commands that worked"
+        case .medium: "from what you usually do"
+        case .weak: "from one thing I noticed"
+        }
+
+        let times = alias.count == 1 ? "once" : "\(alias.count) times"
+
+        return alias.trusted
+            ? "\(how), \(times). I act on this."
+            : "\(how), \(times). Not enough for me to act on yet."
     }
 }

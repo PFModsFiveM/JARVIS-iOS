@@ -30,6 +30,8 @@ enum SettingsDestination: String, CaseIterable, Hashable, Codable {
     case standbyLights = "standby-lights"
     case whereabouts = "whereabouts"
     case knownPlaces = "places"
+    case notices = "notices"
+    case vocabulary = "vocabulary"
 
     // PC-PRIME
     case waking = "waking"
@@ -173,6 +175,22 @@ enum SettingsCatalogue {
                       category: .mobile,
                       keywords: ["places", "home", "university", "work", "name", "rename", "alias",
                                  "routine", "usually", "where am i", "known places"]),
+
+        SettingsEntry(destination: .notices,
+                      title: "What I tell you about",
+                      subtitle: "Which kinds of notification reach this phone.",
+                      symbol: "bell.badge",
+                      category: .mobile,
+                      keywords: ["notification", "notifications", "notify", "alerts", "notices",
+                                 "quiet", "silence", "badge", "banner", "push", "categories"]),
+
+        SettingsEntry(destination: .vocabulary,
+                      title: "What your words mean",
+                      subtitle: "The names you use for things, and how sure I am of each.",
+                      symbol: "text.book.closed",
+                      category: .mobile,
+                      keywords: ["alias", "aliases", "names", "vocabulary", "words", "correction",
+                                 "corrected", "bedroom lamp", "means", "rename"]),
 
         // MARK: PC-Prime
         SettingsEntry(destination: .waking,

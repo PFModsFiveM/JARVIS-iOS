@@ -228,7 +228,13 @@ final class NoticeCentre: ObservableObject {
         before = now
 
         for notice in notices where memory.isNew(notice) {
+            // Remembered either way, so that turning a category back on does not produce a flood
+            // of notices about transitions that have long since passed - priority §7A. The owner
+            // asked not to be told about these, not to be told about them later.
             memory.gave(notice)
+
+            guard NoticeSettings.shared.wanted(notice.kind) else { continue }
+
             recent = Array((recent + [notice]).suffix(20))
 
             await (show ?? Self.toIos)(notice)
