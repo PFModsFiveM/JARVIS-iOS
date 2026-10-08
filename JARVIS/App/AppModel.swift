@@ -1278,8 +1278,10 @@ final class AppModel: ObservableObject {
             }
         }
 
-        // Every lane failed, and the last one had the words for it.
-        let said = MobileCapabilities.waiting(nodeState)
+        // Every lane failed. What is said depends on what was asked - priority §3B: the desk's
+        // work offers to wake the desk, a live fact says it will not be guessed at, and a general
+        // question says it needs a provider key rather than a machine.
+        let said = MobileCapabilities.nothingCanDoIt(request, state: nodeState)
         lines.append(ChatLine(speaker: .jarvis, text: said))
         if speakAnswers || spoken { voice.say(said) }
     }
@@ -1396,6 +1398,16 @@ final class AppModel: ObservableObject {
             thinking = true
             let said = await SmartHomeModel.shared.toggle(id)
             thinking = false
+            answer(said, spoken: spoken)
+            fileTurn(request, said)
+            return true
+
+        // Being spoken to rather than asked for anything - priority §3C. Reached only when the PC
+        // is not answering, because `decide` hands the desk everything it can hear: the PC knows
+        // what it has been doing and this phone does not, so with the desk awake the PC says it.
+        case .pleasantry(let kind):
+            let said = MobilePhrases.pleasantry(kind, pcName: pcName, pcAnswering: link.isOnline)
+
             answer(said, spoken: spoken)
             fileTurn(request, said)
             return true

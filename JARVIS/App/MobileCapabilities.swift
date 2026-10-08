@@ -256,6 +256,132 @@ enum MobileCapabilities {
         }
     }
 
+    // MARK: What kind of request it is - priority §3B, §3E and §3F
+
+    /// What a sentence would need, when nothing on this phone matched it.
+    ///
+    /// **This is not a second reading of the sentence for routing.** Routing is decided by
+    /// `LocalCapability` and by whether the PC is answering, exactly as before. This decides only
+    /// the *words* used when nothing can carry a request out - and it exists because one sentence
+    /// was answered with another's explanation. "What's the weather?" and "How are you?" came back
+    /// as "That one is DOM-PC's, sir, and it isn't answering", which is wrong twice: a question
+    /// about the world is not a machine's property, and offering to boot a PC is no remedy for it.
+    ///
+    /// Note the direction of the lists. Only the *desk* is matched positively; an unmatched
+    /// sentence is a general question, not a PC action. A phone that treated everything it did not
+    /// recognise as the PC's would be back where it started.
+    enum RequestShape: Equatable {
+        /// Something only the machine at the desk can do: an application, a file, the screen.
+        case theDesk
+
+        /// A fact about the world as it is right now, which nothing on this phone measures.
+        /// Carries what was asked for - "weather", "prices" - so the sentence can name it.
+        case liveFact(String)
+
+        /// Everything else. Answerable by a provider, and answerable without the PC.
+        case general
+    }
+
+    /// Which shape a sentence has, for the words only.
+    static func shape(_ sentence: String) -> RequestShape {
+        let words = Set(sentence.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty })
+
+        // A live fact first, because "what is the weather doing" contains a doing word and would
+        // otherwise read as an action at the desk.
+        //
+        // Asking *about* a subject is not asking for its current value, though, and a provider can
+        // explain how a barometer works perfectly well. So an explanatory framing takes the
+        // sentence back out of this class - which is the difference between "what's the weather"
+        // and "how does weather radar work".
+        if words.isDisjoint(with: explaining) {
+            for (asked, named) in liveFacts where !words.isDisjoint(with: asked) {
+                return .liveFact(named)
+            }
+        }
+
+        // Something at the desk. Both halves have to be present: a doing word and a thing at the
+        // desk to do it to. "Open Blender" qualifies; "how do I open a bank account" does not.
+        let doing: Set<String> = [
+            "open", "launch", "start", "run", "close", "quit", "kill", "minimise", "minimize",
+            "maximise", "maximize", "move", "resize", "install", "uninstall", "download", "save",
+            "delete", "rename", "copy", "paste", "type", "click", "scroll", "screenshot", "record",
+            "play", "pause", "skip", "mute", "render", "build", "compile", "lock", "unlock"
+        ]
+
+        let atTheDesk: Set<String> = [
+            "app", "application", "apps", "window", "windows", "screen", "desktop", "file",
+            "files", "folder", "folders", "document", "documents", "program", "programme",
+            "project", "projects", "game", "games", "browser", "tab", "tabs", "blender", "steam",
+            "spotify", "discord", "chrome", "edge", "firefox", "vscode", "explorer", "terminal",
+            "clipboard", "mouse", "keyboard", "taskbar", "monitor", "monitors"
+        ]
+
+        if !words.isDisjoint(with: doing) && !words.isDisjoint(with: atTheDesk) { return .theDesk }
+
+        // Naming a thing at the desk and asking about it is still the desk's: "what's on my
+        // screen", "which projects do I have".
+        if !words.isDisjoint(with: atTheDesk) && !words.isDisjoint(with: ["what", "whats", "which", "where", "show", "list"]) {
+            return .theDesk
+        }
+
+        return .general
+    }
+
+    /// The things nothing on this phone can measure, and the word to call each one.
+    ///
+    /// Weather is the one the owner found. The rest are here because they fail the same way: a
+    /// provider with no tools will answer them fluently and be making it up, and a phone that read
+    /// that out would be lying with JARVIS's voice.
+    /// Words that make a sentence a question about a subject rather than about its current value.
+    private static let explaining: Set<String> = [
+        "explain", "mean", "means", "meaning", "definition", "work", "works", "working",
+        "why", "history", "difference", "between", "typically", "generally", "usually"
+    ]
+
+    private static let liveFacts: [(Set<String>, String)] = [
+        (["weather", "forecast", "temperature", "raining", "rain", "snowing", "sunny"], "weather"),
+        (["price", "prices", "stock", "stocks", "shares", "ticker"], "market data"),
+        (["news", "headlines"], "news"),
+        (["score", "scores", "fixture", "fixtures", "kickoff"], "sports data"),
+        (["traffic"], "traffic")
+    ]
+
+    /// What to say when nothing can carry a request out - priority §3B, §3E and §3F.
+    ///
+    /// Three different sentences for three different situations, where there used to be one. The
+    /// desk's work offers to wake the desk; a live fact says plainly that it will not be guessed
+    /// at; and a general question says what it actually needs, which is a provider key and not a
+    /// PC. Waking is offered only where waking is the remedy.
+    static func nothingCanDoIt(_ sentence: String, state: NodeState) -> String {
+        let wakeable = state.wakeEnabled && state.wakeReachable
+
+        switch shape(sentence) {
+        case .theDesk:
+            return wakeable
+                ? MobilePhrases.needsTheDeskAndItCanBeWoken(state.pcName)
+                : MobilePhrases.needsTheDeskAndItCannotBeWoken(state.pcName)
+
+        case .liveFact(let what):
+            return wakeable
+                ? MobilePhrases.noLiveReadingAndThePCCanBeWoken(what, state.pcName)
+                : MobilePhrases.noLiveReadingOfTheWorld(what)
+
+        case .general:
+            // Not claimed as the PC's. Two things could have answered it - the desk, and a
+            // provider of this phone's own - so when neither is there both are named with their
+            // remedies, and the owner picks. When a provider *is* configured, this is the
+            // cloud lane's fallback rather than the first word, and by then the desk is the only
+            // thing left to wait for.
+            return state.cloudReady
+                ? (wakeable
+                    ? MobilePhrases.needsTheDeskAndItCanBeWoken(state.pcName)
+                    : MobilePhrases.needsTheDeskAndItCannotBeWoken(state.pcName))
+                : MobilePhrases.neitherThePCNorAProvider(state.pcName, canWake: wakeable)
+        }
+    }
+
     /// Decides which node a sentence belongs to, and which node catches it if that one drops.
     ///
     /// The order is the architecture, and it has not changed: a PC that is answering gets
@@ -277,6 +403,10 @@ enum MobileCapabilities {
             // fresher one in hand. So it stays here whether or not the desk is awake.
             if local.answeredBestHere { return MobileDecision(mine) }
 
+            // A pleasantry takes this same path on purpose - priority §3C. With the desk awake the
+            // PC says hello, because it knows what it has been doing; with the desk asleep this
+            // phone says it, which is the whole of the complaint that "how are you?" came back as
+            // "that one is your PC's".
             return state.pcAnswering
                 ? MobileDecision(.pcPrime, fallback: mine)
                 : MobileDecision(mine)
@@ -284,13 +414,23 @@ enum MobileCapabilities {
 
         if state.pcAnswering { return MobileDecision(.pcPrime) }
 
-        // Nothing here can do it and the PC is not there. A general question still has somewhere to
-        // go when the owner has given this phone a provider of its own.
-        if state.cloudReady {
-            return MobileDecision(.cloud, fallback: .unavailable(waiting(state)))
+        // A fact about the world as it is right now - priority §3F. Nothing on this phone measures
+        // it, and a provider with no tools has no honest answer either: it would produce a
+        // plausible temperature and the owner would have no way to tell. So this is refused in
+        // words rather than sent somewhere that would guess. The PC, which has the feed, answers
+        // it normally - the rung above this one.
+        if case .liveFact = shape(sentence) {
+            return MobileDecision(.unavailable(nothingCanDoIt(sentence, state: state)))
         }
 
-        return MobileDecision(.unavailable(waiting(state)))
+        // Nothing here can do it and the PC is not there. A general question still has somewhere to
+        // go when the owner has given this phone a provider of its own - and what is said when it
+        // does not now depends on what was actually asked, rather than calling everything the PC's.
+        if state.cloudReady {
+            return MobileDecision(.cloud, fallback: .unavailable(nothingCanDoIt(sentence, state: state)))
+        }
+
+        return MobileDecision(.unavailable(nothingCanDoIt(sentence, state: state)))
     }
 
     /// Whether a request to the PC certainly did not happen, or merely might not have.

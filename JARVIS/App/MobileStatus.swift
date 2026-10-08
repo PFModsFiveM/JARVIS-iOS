@@ -105,6 +105,63 @@ enum MobileStatus {
         ]
     }
 
+    // MARK: The two nodes, as the screen reads them - priority §3A and §11
+
+    /// How a node reads, for colour.
+    enum Tone: Equatable {
+        /// This node is running and reachable.
+        case alive
+        /// Something is in progress - a handshake, a wake.
+        case waiting
+        /// Not answering.
+        case down
+    }
+
+    /// One node and one word for it.
+    struct NodeLine: Identifiable, Equatable {
+        let id: String
+        let title: String
+        let word: String
+        let tone: Tone
+        /// A short second line, when there is something worth adding.
+        let detail: String?
+    }
+
+    /// The headline, which is about JARVIS rather than about a connection.
+    ///
+    /// **Always ONLINE.** This phone is a node of JARVIS, not a remote control for one, and the
+    /// node being asked is by definition running. The owner's complaint was that with the desk
+    /// asleep the screen said CONNECTING - which reads as "JARVIS is not here yet", when in fact
+    /// JARVIS was there, on the phone, able to work the lights and say where they were. The PC's
+    /// own state is a separate line below, where it belongs.
+    static func headline() -> String { "JARVIS ONLINE" }
+
+    /// The nodes this session has: this phone and the desk. Those two and no others.
+    ///
+    /// `pcWord` is the PC panel's own headline, passed in rather than computed here, so the strip
+    /// and the panel under it cannot disagree about the same machine.
+    static func nodes(_ state: MobileCapabilities.NodeState, pcWord: String) -> [NodeLine] {
+        [
+            NodeLine(
+                id: "mobile",
+                title: "MOBILE",
+                word: "ACTIVE",
+                tone: .alive,
+                detail: nil),
+
+            NodeLine(
+                id: "pc",
+                title: "PC-PRIME",
+                word: pcWord,
+                tone: state.pcAnswering
+                    ? .alive
+                    : pcWord == "WAKING..." || pcWord == "CONNECTING" ? .waiting : .down,
+                detail: state.pcAnswering
+                    ? nil
+                    : state.wakeEnabled && state.wakeReachable ? "Can be woken from here" : nil)
+        ]
+    }
+
     /// Whether the smart home can be worked, and by which route.
     private static func homeState(_ state: MobileCapabilities.NodeState) -> MobileAvailability.State {
         if state.pcAnswering { return .available("Through \(state.pcName)") }

@@ -60,6 +60,28 @@ enum LocalCapability: Equatable {
     /// exactly what the router does with it.
     case status
 
+    /// Being spoken to rather than asked for anything - priority §3C.
+    ///
+    /// "Hello", "how are you", "thank you", "are you there", a bare "Jarvis". Here because a
+    /// phone that cannot say hello with the desk asleep is a phone that has stopped being JARVIS,
+    /// and the owner asked why "how are you?" came back as "that one is your PC's".
+    ///
+    /// **Not answered here when the PC is answering.** The PC knows what it has been doing and
+    /// this does not, so with the desk awake the PC says it and this is only the fallback -
+    /// exactly as `MobileCapabilities.decide` treats every other thing both nodes can do. The
+    /// matching is exact against a short list of whole sentences rather than a keyword search,
+    /// because "how are you going to open Blender" is a request and not a greeting.
+    case pleasantry(Pleasantry)
+
+    /// Which pleasantry, so the answer can be the right one rather than one generic line.
+    enum Pleasantry: String, Equatable {
+        case greeting
+        case howAreYou
+        case thanks
+        case areYouThere
+        case goodbye
+    }
+
     /// A question about where the owner is, or was - programme §1E.
     ///
     /// Here by exactly the same test as the battery: the phone is the only node that can know
@@ -101,6 +123,7 @@ enum LocalCapability: Equatable {
         case .state: return "device.power.state"
         case .power: return "device.power.battery"
         case .status: return "node.status"
+        case .pleasantry: return "conversation.pleasantry"
         case .deviceToggle: return "devices.toggle"
         case .whereabouts: return "owner.whereabouts"
         case .namePlace: return "owner.place.name"
@@ -120,7 +143,7 @@ enum LocalCapability: Equatable {
     var isADeviceCommand: Bool {
         switch self {
         case .device, .deviceToggle: return true
-        case .wake, .state, .power, .status, .whereabouts, .namePlace: return false
+        case .wake, .state, .power, .status, .whereabouts, .namePlace, .pleasantry: return false
         }
     }
 
@@ -128,7 +151,7 @@ enum LocalCapability: Equatable {
     var target: String? {
         switch self {
         case .wake(let target), .state(let target), .power(let target): return target
-        case .status: return nil
+        case .status, .pleasantry: return nil
         case .device(let id, _), .deviceToggle(let id): return id
 
         // The place the question named, when it named one. "Where am I" names nothing, which is
@@ -160,6 +183,11 @@ enum LocalCapability: Equatable {
         // asked before this one would read "jarvis, status" as a question about the PC in
         // particular - which is a narrower answer than the one that was asked for.
         if isAskingForStatus(words) { return .status }
+
+        // Being spoken to rather than asked for anything - priority §3C. Asked after status, so
+        // "how are things" stays the status question it was, and before everything else because
+        // the match is against whole sentences: nothing that matches this could want another rule.
+        if let said = aPleasantry(sentence) { return .pleasantry(said) }
 
         // Where the owner is, next. Asked before the battery rules because "where is my phone" is
         // a question about a place and not about a charge, and before the wake rules because
@@ -356,6 +384,67 @@ enum LocalCapability: Equatable {
         if !said.isDisjoint(with: subjects) && !said.isDisjoint(with: judgements) { return true }
 
         return said.contains("how") && !said.isDisjoint(with: subjects)
+    }
+
+    /// Whole sentences that are a pleasantry and nothing else - priority §3C.
+    ///
+    /// **Exact matches, not keywords.** A keyword search for "how are you" would catch "how are
+    /// you going to open Blender", and a greeting that swallowed a request would be worse than no
+    /// greeting at all. So the sentence is reduced to its words, the name and the fillers are
+    /// dropped, and what is left must be one of these entire. Anything longer is a request and
+    /// goes where requests go.
+    private static let pleasantries: [String: Pleasantry] = [
+        "hello": .greeting, "hi": .greeting, "hey": .greeting,
+        "good morning": .greeting, "morning": .greeting,
+        "good afternoon": .greeting, "afternoon": .greeting,
+        "good evening": .greeting, "evening": .greeting,
+
+        "how are you": .howAreYou, "how are you doing": .howAreYou, "how you doing": .howAreYou,
+        "how are we": .howAreYou, "how is it going": .howAreYou, "hows it going": .howAreYou,
+        "how goes it": .howAreYou, "you ok": .howAreYou, "you okay": .howAreYou,
+        "are you ok": .howAreYou, "are you okay": .howAreYou, "are you well": .howAreYou,
+
+        "thanks": .thanks, "thank you": .thanks, "thanks very much": .thanks,
+        "thank you very much": .thanks, "cheers": .thanks, "appreciate it": .thanks,
+        "much appreciated": .thanks, "nice one": .thanks,
+
+        "are you there": .areYouThere, "you there": .areYouThere, "are you awake": .areYouThere,
+        "are you listening": .areYouThere, "are you online": .areYouThere,
+        "can you hear me": .areYouThere, "do you hear me": .areYouThere,
+
+        "goodbye": .goodbye, "bye": .goodbye, "good night": .goodbye, "goodnight": .goodbye,
+        "night": .goodbye, "see you": .goodbye, "see you later": .goodbye
+    ]
+
+    private static func aPleasantry(_ sentence: String) -> Pleasantry? {
+        // Split from the sentence rather than taken from the caller's words, because the caller
+        // splits on every non-alphanumeric and so turns "how's" into "how" and "s". That costs
+        // the caller nothing - it matches whole words against lists - and would cost this
+        // everything, since what it matches is the whole sentence.
+        let words = sentence.lowercased()
+            .replacingOccurrences(of: "\u{2019}", with: "")
+            .replacingOccurrences(of: "'", with: "")
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+
+        guard !words.isEmpty else { return nil }
+
+        // The name on its own is the owner checking JARVIS is there, which is the one single-word
+        // sentence worth answering here. With the name stripped it would be nothing at all.
+        if words == ["jarvis"] { return .areYouThere }
+
+        let filler = ["jarvis", "please", "there", "so", "then", "mate", "buddy", "old", "chap"]
+
+        // "there" is filler in "hello there" and meaning in "are you there", so it is dropped only
+        // when something else survives the dropping - which "are you there" would not notice,
+        // because its own key carries it.
+        if let exact = pleasantries[words.joined(separator: " ")] { return exact }
+
+        let said = words.filter { !filler.contains($0) }
+
+        guard !said.isEmpty else { return nil }
+
+        return pleasantries[said.joined(separator: " ")]
     }
 
     /// Whether a sentence is asking what a machine is doing, rather than telling it to do something.

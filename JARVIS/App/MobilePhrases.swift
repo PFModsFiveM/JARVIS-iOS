@@ -58,6 +58,96 @@ enum MobilePhrases {
         "That one is \(machine)'s, sir, and it isn't answering. There's nothing I can do about it from this phone until waking it is set up."
     }
 
+    // MARK: Being spoken to, with nothing at the desk - priority §3C
+
+    /// A greeting answered rather than forwarded.
+    ///
+    /// Said by this phone only when the PC is not answering. With the desk awake the PC says it,
+    /// because the PC knows what it has been doing and this does not, and a phone that grabbed
+    /// "how are you" would be answering for a JARVIS it cannot see.
+    static func hereAndListening() -> String {
+        "I'm here, sir."
+    }
+
+    static func greeting() -> String {
+        "Good to hear from you, sir."
+    }
+
+    /// How JARVIS is, with the desk asleep. Honest about which part of itself is missing.
+    static func howIAmWithoutThePC(_ machine: String) -> String {
+        "Running well on this phone, sir. \(machine) isn't answering, so everything at the desk is out of reach for the moment."
+    }
+
+    static func howIAm() -> String {
+        "Running well, sir."
+    }
+
+    static func welcome() -> String {
+        "A pleasure, sir."
+    }
+
+    static func untilLater() -> String {
+        "Until later, sir."
+    }
+
+    /// The answer to one pleasantry, which depends on whether the desk is there.
+    ///
+    /// One function rather than a switch in the app and another in the Siri path, so "hello"
+    /// typed, spoken and asked through Siri are the same JARVIS saying the same thing.
+    static func pleasantry(
+        _ kind: LocalCapability.Pleasantry, pcName: String, pcAnswering: Bool
+    ) -> String {
+        switch kind {
+        case .greeting: return greeting()
+        case .thanks: return welcome()
+        case .goodbye: return untilLater()
+        case .areYouThere: return hereAndListening()
+        case .howAreYou: return pcAnswering ? howIAm() : howIAmWithoutThePC(pcName)
+        }
+    }
+
+    // MARK: When nothing can answer - priority §3B, §3E and §3F
+
+    /// A question with no PC and no provider of this phone's own.
+    ///
+    /// Deliberately **not** "that one is your PC's". Two things could have answered it and
+    /// neither is set up, so both are named with their remedies - which is the honest shape for a
+    /// question nothing recognised, and the owner can then choose. Claiming it as the PC's
+    /// property was wrong in two directions at once: untrue of a question about the world, and
+    /// useless as advice, because waking a machine is no remedy for a missing key.
+    static func neitherThePCNorAProvider(_ machine: String, canWake: Bool) -> String {
+        let opening = "\(machine) isn't answering, sir, and this phone has no provider of its own yet."
+
+        return canWake
+            ? opening + " Say \u{201C}wake my PC\u{201D} and I'll ask it, or add a key in Settings "
+                + "\u{203A} Cloud intelligence and I'll answer what I can here."
+            : opening + " Add a key in Settings \u{203A} Cloud intelligence and I'll answer what I can here."
+    }
+
+    /// Something only the desk can do, with the desk asleep and wakeable.
+    static func needsTheDeskAndItCanBeWoken(_ machine: String) -> String {
+        "That one needs \(machine), sir, and it isn't answering. Say \u{201C}wake my PC\u{201D} and I'll switch it on, then ask me again."
+    }
+
+    /// Something only the desk can do, with the desk asleep and not wakeable from here.
+    static func needsTheDeskAndItCannotBeWoken(_ machine: String) -> String {
+        "That one needs \(machine), sir, and it isn't answering - and waking it from here isn't set up yet."
+    }
+
+    /// A question about the world right now, which nothing on this phone measures.
+    ///
+    /// Weather is the one that prompted this. The provider has no live readings, so an answer from
+    /// it would be a plausible invention, and the owner would have no way to tell. Saying so is
+    /// the only honest option and it is a short sentence.
+    static func noLiveReadingOfTheWorld(_ what: String) -> String {
+        "I've no live \(what) on this phone, sir, and I won't guess at it. Your PC has the feed."
+    }
+
+    static func noLiveReadingAndThePCCanBeWoken(_ what: String, _ machine: String) -> String {
+        "I've no live \(what) on this phone, sir, and I won't guess at it. "
+        + "\(machine) has the feed - say \u{201C}wake my PC\u{201D} and I'll ask it."
+    }
+
     // MARK: What the machine is doing
 
     static func cannotTellWithoutTheService() -> String {
@@ -217,7 +307,22 @@ enum MobilePhrases {
             waitingToSync(1),
             waitingToSync(14),
             catchingUp(40),
-            nothingWantsAttention()
+            nothingWantsAttention(),
+
+            // Priority §3C and §3B. In the list so the register tests hold them to the same rules
+            // as everything else: the owner addressed, nothing claimed, nothing invented.
+            hereAndListening(),
+            greeting(),
+            howIAm(),
+            howIAmWithoutThePC("DOM-PC"),
+            welcome(),
+            untilLater(),
+            neitherThePCNorAProvider("DOM-PC", canWake: true),
+            neitherThePCNorAProvider("DOM-PC", canWake: false),
+            needsTheDeskAndItCanBeWoken("DOM-PC"),
+            needsTheDeskAndItCannotBeWoken("DOM-PC"),
+            noLiveReadingOfTheWorld("weather"),
+            noLiveReadingAndThePCCanBeWoken("weather", "DOM-PC")
         ]
     }
 }

@@ -45,6 +45,11 @@ struct HomeView: View {
                         .frame(width: 84, height: 84)
                 }
                 VStack(alignment: .leading, spacing: 6) {
+                    // Which nodes are here, before anything about a connection - priority §3A.
+                    // JARVIS is online because this phone is running it; the desk is a line of its
+                    // own underneath, and the two are no longer one word.
+                    NodeStateStrip()
+
                     // The PC, whether or not JARVIS is answering - with the wake button when it is
                     // asleep and this phone can reach its card from where it is.
                     DevicePanel()

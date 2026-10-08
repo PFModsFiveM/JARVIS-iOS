@@ -74,6 +74,16 @@ enum IntentStandalone {
             PowerReporter.shared.read()
             return MobileStatus.line(AppModel.shared.nodeState, power: PowerReporter.shared.readings)
 
+        // Being spoken to - priority §3C. Answered out here only when the desk is not answering,
+        // by the same rule the app follows: the PC says hello when it can, because it knows what
+        // it has been doing. Returning nil hands it to the PC, which is the caller's own path.
+        case .pleasantry(let kind):
+            let state = AppModel.shared.nodeState
+
+            guard !state.pcAnswering else { return nil }
+
+            return MobilePhrases.pleasantry(kind, pcName: state.pcName, pcAnswering: false)
+
         case .wake:
             // Waking is `WakePCIntent`'s, which Siri already offers by name and which reports what
             // it actually sent. Answering it here would be a second path to the same packet.
