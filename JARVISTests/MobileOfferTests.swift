@@ -61,6 +61,18 @@ final class MobileOfferTests: XCTestCase {
         XCTAssertTrue(MobileOffers.whichOne(between).contains("Bevels Explained"))
     }
 
+    func testAPositionWithNothingListLikeAboutItIsNotTakenAsAList() {
+        // The PC draws the same line: "first" and "top" are ordinary words, and "play top gun" is
+        // not about a list. One of the words a list is made of has to be there.
+        guard case .none = MobileOffers.pick("play top gun", from: results()) else {
+            return XCTFail("top gun is a film")
+        }
+
+        guard case .none = MobileOffers.pick("open the second", from: results()) else {
+            return XCTFail("a bare ordinal is not enough")
+        }
+    }
+
     func testASentenceAboutSomethingElseEntirelyIsNotAboutTheList() {
         // This runs before the ordinary routing, so taking a request that was about something else
         // would answer the wrong question confidently. Every one of these must fall through.

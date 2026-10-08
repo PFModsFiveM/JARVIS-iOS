@@ -33,21 +33,29 @@ enum MobileOffers {
     static let resolvesFor: TimeInterval = 20 * 60
 
     /// The words that pick a position out of a list.
+    ///
+    /// Ordinals only, which is the PC's own vocabulary. Cardinals are deliberately absent: with
+    /// "one" meaning position one, "open the fifth one" found no fifth, carried on, hit "one" and
+    /// opened the first - the worst possible answer to a sentence that named a position.
     private static let ordinals: [String: Int] = [
-        "first": 1, "1st": 1, "one": 1,
-        "second": 2, "2nd": 2, "two": 2,
-        "third": 3, "3rd": 3, "three": 3,
-        "fourth": 4, "4th": 4, "four": 4,
-        "fifth": 5, "5th": 5, "five": 5,
+        "first": 1, "1st": 1, "top": 1,
+        "second": 2, "2nd": 2,
+        "third": 3, "3rd": 3,
+        "fourth": 4, "4th": 4,
+        "fifth": 5, "5th": 5,
         "last": -1
     ]
 
-    /// Words that say the sentence is about the list at all.
+    /// The words a list is made of, one of which has to be there.
     ///
     /// Required, and that is the point: "open the second one" is about the list and "what's the
     /// weather" is not, and a reading that resolved any ordinal anywhere would answer the wrong
-    /// question confidently.
-    private static let pointers = ["one", "ones", "option", "result", "video", "link", "item", "idea"]
+    /// question confidently. The PC draws the same line for the same reason - "first" and "top"
+    /// are ordinary words, and "play top gun" is not about a list.
+    private static let pointers = [
+        "one", "ones", "option", "options", "result", "results",
+        "video", "videos", "clip", "link", "item", "idea", "ideas", "page", "list"
+    ]
 
     /// Which offer a sentence means.
     static func pick(_ said: String, from offers: [MobileOffer]) -> MobileOfferPick {
@@ -58,18 +66,20 @@ enum MobileOffers {
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { !$0.isEmpty }
 
-        guard words.contains(where: { pointers.contains($0) || ordinals.keys.contains($0) }) else {
-            return .none
-        }
+        guard words.contains(where: { pointers.contains($0) }) else { return .none }
 
         // A position, when one was named. "The last one" is the end of the list rather than a
         // number, which is how people actually refer to the end of a list.
+        //
+        // And a position nobody offered ends it rather than falling through to the titles: the
+        // owner named a place in the list, there is nothing there, and guessing from the words
+        // instead would be answering a different question.
         for word in words {
             guard let position = ordinals[word] else { continue }
 
             if position == -1, let last = offers.last { return .one(last) }
 
-            if let found = offers.first(where: { $0.position == position }) { return .one(found) }
+            return offers.first(where: { $0.position == position }).map { MobileOfferPick.one($0) } ?? .none
         }
 
         // No position, so the title has to carry it. Every offer whose title shares a distinctive
