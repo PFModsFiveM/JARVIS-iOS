@@ -106,6 +106,34 @@ enum MobilePhrases {
         }
     }
 
+    // MARK: Getting the desk ready - priority §4
+
+    /// The wake has been sent and the rest is waiting for the machine to answer.
+    ///
+    /// Two facts in one sentence, and neither of them is a claim that anything is open yet: the
+    /// request has gone, and the project will be opened when the desk answers. Wake-on-LAN has no
+    /// reply, so "sent" is the whole of what can honestly be said about the first half.
+    static func deskIsBeingPrepared(_ machine: String, project: String) -> String {
+        let what = project.isEmpty ? "the project you were last on" : project
+
+        return "Sending the wake request now, sir. I'll have \(machine) open \(what) as soon as it answers."
+    }
+
+    /// Asked for while the desk is already up, so there is nothing to wake.
+    static func deskIsAlreadyUp(_ machine: String) -> String {
+        "\(machine) is already up, sir - I'll ask it to open that now."
+    }
+
+    /// Asked for with no way to wake the machine from here.
+    static func cannotPrepareTheDesk(_ machine: String) -> String {
+        "I can't wake \(machine) from here yet, sir, so there's nothing to open it on."
+    }
+
+    /// The desk has taken it on. Still not a claim that anything is open - the PC says that.
+    static func deskHasTakenItOn(_ machine: String) -> String {
+        "\(machine) is answering, sir. It's getting the desk ready now."
+    }
+
     // MARK: When nothing can answer - priority §3B, §3E and §3F
 
     /// A question with no PC and no provider of this phone's own.
@@ -322,7 +350,14 @@ enum MobilePhrases {
             needsTheDeskAndItCanBeWoken("DOM-PC"),
             needsTheDeskAndItCannotBeWoken("DOM-PC"),
             noLiveReadingOfTheWorld("weather"),
-            noLiveReadingAndThePCCanBeWoken("weather", "DOM-PC")
+            noLiveReadingAndThePCCanBeWoken("weather", "DOM-PC"),
+
+            // Priority §4.
+            deskIsBeingPrepared("DOM-PC", project: ""),
+            deskIsBeingPrepared("DOM-PC", project: "tow yard"),
+            deskIsAlreadyUp("DOM-PC"),
+            cannotPrepareTheDesk("DOM-PC"),
+            deskHasTakenItOn("DOM-PC")
         ]
     }
 }

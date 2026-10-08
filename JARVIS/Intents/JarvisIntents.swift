@@ -89,6 +89,13 @@ enum IntentStandalone {
             // it actually sent. Answering it here would be a second path to the same packet.
             return nil
 
+        case .prepareDesk:
+            // Getting the desk ready - priority §4 - sends a wake packet and keeps a request for
+            // later, which is two side effects outside this process. Both belong to the app, where
+            // the owner can see the state they produced; a Shortcut firing them with nothing on
+            // screen would leave a request waiting that nobody knew about. So this hands it back.
+            return nil
+
         // Where the owner is - programme §1E. Answered out here as well as in the app, because
         // "Siri, ask JARVIS where I am" is the case this is most useful in: the phone is in a
         // pocket and the app is not open.

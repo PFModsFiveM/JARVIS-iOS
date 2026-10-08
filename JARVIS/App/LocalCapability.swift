@@ -60,6 +60,18 @@ enum LocalCapability: Equatable {
     /// exactly what the router does with it.
     case status
 
+    /// Having the desk ready to work at: the PC on, and the right project open - priority §4.
+    ///
+    /// Here because the first half is impossible for anything but this phone - a sleeping PC
+    /// cannot be asked to wake itself - and the second half is impossible for anything until the
+    /// first half has happened. One capability rather than two, because the owner asked for one
+    /// thing and the gap between the halves is exactly what makes it hard.
+    ///
+    /// `project` is what they named, or empty for the one they were last on. Nothing here decides
+    /// which that is: the PC resolves it at the moment of acting, from evidence this phone does
+    /// not have, and deciding it here an hour earlier would be a worse answer written down sooner.
+    case prepareDesk(project: String)
+
     /// Being spoken to rather than asked for anything - priority §3C.
     ///
     /// "Hello", "how are you", "thank you", "are you there", a bare "Jarvis". Here because a
@@ -124,6 +136,7 @@ enum LocalCapability: Equatable {
         case .power: return "device.power.battery"
         case .status: return "node.status"
         case .pleasantry: return "conversation.pleasantry"
+        case .prepareDesk: return "workspace.prepare"
         case .deviceToggle: return "devices.toggle"
         case .whereabouts: return "owner.whereabouts"
         case .namePlace: return "owner.place.name"
@@ -143,7 +156,7 @@ enum LocalCapability: Equatable {
     var isADeviceCommand: Bool {
         switch self {
         case .device, .deviceToggle: return true
-        case .wake, .state, .power, .status, .whereabouts, .namePlace, .pleasantry: return false
+        case .wake, .state, .power, .status, .whereabouts, .namePlace, .pleasantry, .prepareDesk: return false
         }
     }
 
@@ -152,6 +165,7 @@ enum LocalCapability: Equatable {
         switch self {
         case .wake(let target), .state(let target), .power(let target): return target
         case .status, .pleasantry: return nil
+        case .prepareDesk(let project): return project.isEmpty ? nil : project
         case .device(let id, _), .deviceToggle(let id): return id
 
         // The place the question named, when it named one. "Where am I" names nothing, which is
@@ -229,7 +243,49 @@ enum LocalCapability: Equatable {
             return nil
         }
 
+        // "Boot my PC and open my latest Blender project" - priority §4. A wake with something to
+        // do afterwards is one request, and treating it as a bare wake would switch the machine on
+        // and forget the half the owner actually cared about.
+        if let desk = alsoOpensSomething(words, sentence) { return desk }
+
         return .wake(target: named(in: words, among: machines))
+    }
+
+    /// Whether a wake request also asks for something once the machine is up - priority §4.
+    ///
+    /// Narrow, and deliberately so. It wants an opening word and a project word in a sentence that
+    /// has already been established as a wake request, which is what keeps "wake my PC" a bare
+    /// wake and "boot the PC and open my latest Blender project" one piece of work. Anything in
+    /// between - "wake my pc and tell me the weather" - stays a bare wake, because the second half
+    /// is an ordinary request that the PC will hear for itself once it is up.
+    private static func alsoOpensSomething(_ words: [String], _ sentence: String) -> LocalCapability? {
+        let opening = ["open", "load", "launch", "resume", "continue", "start", "reopen"]
+        let work = ["project", "projects", "blend", "blender", "scene", "file"]
+
+        guard words.contains(where: { opening.contains($0) }),
+              words.contains(where: { work.contains($0) })
+        else { return nil }
+
+        return .prepareDesk(project: projectNamed(words))
+    }
+
+    /// The project a compound request names, or empty for "the one I was last on".
+    ///
+    /// Everything that is not one of the sentence's own words. "My latest Blender project" names
+    /// nothing in particular and comes back empty, which is the common case and the one the PC
+    /// resolves for itself; "open the tow yard project" comes back with the name.
+    private static func projectNamed(_ words: [String]) -> String {
+        let ours = Set([
+            "wake", "waken", "start", "boot", "power", "turn", "switch", "online", "on", "up",
+            "get", "please", "jarvis", "and", "then", "the", "a", "an", "my", "our", "me",
+            "pc", "computer", "workstation", "desktop", "rig", "machine", "tower",
+            "open", "load", "launch", "resume", "continue", "reopen",
+            "project", "projects", "blend", "blender", "scene", "file",
+            "latest", "last", "recent", "current", "newest", "most", "previous", "one", "was",
+            "working", "worked"
+        ])
+
+        return DeskRequest.plain(words.filter { !ours.contains($0) }.joined(separator: " "))
     }
 
     /// Whether the sentence is asking how the whole of JARVIS is doing.

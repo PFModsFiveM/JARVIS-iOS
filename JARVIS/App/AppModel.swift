@@ -709,6 +709,11 @@ final class AppModel: ObservableObject {
                 link = .online(name)
                 wakeState = nil
                 await refresh()
+
+                // What the owner asked of this machine while it was asleep - priority §4. Here
+                // rather than on a timer, because this is the moment it became possible, and the
+                // PC's own replay protection makes a second offer harmless.
+                await offerWhatTheDeskOwes()
                 return
             } catch {
                 await client.close()
@@ -1170,6 +1175,37 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Offers the PC what the owner asked of it while it was asleep - priority §4.
+    ///
+    /// **Why this is safe to call on every connection.** The request carries this phone's own id,
+    /// and the PC hands each id out exactly once however many times it is offered - so a phone
+    /// that sent it, lost the acknowledgement and reconnected does not have its project opened
+    /// twice. That is what lets this be a plain retry rather than a protocol.
+    ///
+    /// It is forgotten once the PC has taken it on, and expires on its own if the machine never
+    /// comes back - two hours, so an intention the owner has moved on from does not fire when they
+    /// sit down to do something else.
+    func offerWhatTheDeskOwes() async {
+        guard let owed = DeskRequests.shared.toOffer() else { return }
+
+        do {
+            _ = try await exchanging("work.prepare", ["task": owed.taskId, "project": owed.project])
+
+            // Taken on. The outcome arrives the way every task's does, through the task record -
+            // so nothing here claims the project is open.
+            DeskRequests.shared.forget()
+
+            let said = MobilePhrases.deskHasTakenItOn(pcName)
+            lines.append(ChatLine(speaker: .jarvis, text: said))
+
+            if speakAnswers { voice.say(said) }
+        } catch {
+            // Kept, and offered again on the next connection. A PC that is up but has not finished
+            // starting JARVIS is the common case here, and it is not a failure of the request.
+            note("work.prepare: \(error.localizedDescription)")
+        }
+    }
+
     /// Files one observation this phone made, and lets the client decide when it travels.
     ///
     /// Takes the exchange rather than reaching for it, so an observation made with the PC off is
@@ -1399,6 +1435,42 @@ final class AppModel: ObservableObject {
             let said = await SmartHomeModel.shared.toggle(id)
             thinking = false
             answer(said, spoken: spoken)
+            fileTurn(request, said)
+            return true
+
+        // "Boot my PC and open my latest Blender project" - priority §4. Two halves with a gap
+        // between them: this phone sends the wake packet, keeps the second half, and offers it on
+        // the first connection that succeeds. Nothing is held open across the boot.
+        case .prepareDesk(let project):
+            if link.isOnline {
+                // Nothing to wake: the desk is up. The request still goes through the same lane,
+                // because that lane is where the PC's own "once only" lives - and re-asking
+                // through the ordinary path would be a second route to one outcome.
+                DeskRequests.shared.hold(DeskRequest(project: project))
+
+                let up = MobilePhrases.deskIsAlreadyUp(pcName)
+                lines.append(ChatLine(speaker: .jarvis, text: up))
+                fileTurn(request, up)
+
+                await offerWhatTheDeskOwes()
+
+                return true
+            }
+
+            let said: String
+
+            if wakeProfile.enabled, !WakeOnLanService.strategies(for: wakeProfile, cellular: network.cellular).isEmpty {
+                DeskRequests.shared.hold(DeskRequest(project: project))
+                said = MobilePhrases.deskIsBeingPrepared(pcName, project: project)
+                lines.append(ChatLine(speaker: .jarvis, text: said))
+                wakePC()
+            } else {
+                // No way to wake it, so there is nothing to open it on. Said rather than holding a
+                // request that could never be offered.
+                said = MobilePhrases.cannotPrepareTheDesk(pcName)
+                answer(said, spoken: spoken)
+            }
+
             fileTurn(request, said)
             return true
 
