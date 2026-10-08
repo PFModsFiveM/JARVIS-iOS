@@ -714,6 +714,11 @@ final class AppModel: ObservableObject {
                 // rather than on a timer, because this is the moment it became possible, and the
                 // PC's own replay protection makes a second offer harmless.
                 await offerWhatTheDeskOwes()
+
+                // And what JARVIS last read out, wherever it read it out - priority §15. Fetched
+                // while the desk is up because the moment the owner needs it is the moment it is
+                // not: results read out at the desk in the evening, picked from on the phone later.
+                await collectWhatWasOffered()
                 return
             } catch {
                 await client.close()
@@ -1206,6 +1211,74 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Opens one of the things JARVIS last read out, when this sentence picks one - priority §15.
+    ///
+    /// Returns false when the sentence is not about the list, which is the overwhelmingly common
+    /// case: this runs before the ordinary routing and must not take a request that was about
+    /// something else.
+    func openWhatWasOffered(_ request: String, spoken: Bool) async -> Bool {
+        let offers = MobileOfferMemory.shared.current()
+
+        guard !offers.isEmpty else { return false }
+
+        switch MobileOffers.pick(request, from: offers) {
+        case .none:
+            return false
+
+        case .ambiguous(let between):
+            let said = MobileOffers.whichOne(between)
+
+            answer(said, spoken: spoken)
+            fileTurn(request, said)
+
+            return true
+
+        case .one(let offer):
+            let said = MobileOffers.because(offer, pcName: MobileOfferMemory.shared.from)
+
+            answer(said, spoken: spoken)
+            fileTurn(request, said)
+
+            // Said first, opened second. The sentence is the honest part - this phone is opening a
+            // new page rather than carrying on with the owner's tab - and it should be on screen
+            // whether or not the address turns out to be openable.
+            if MobileOffers.reopenable(offer), let address = offer.address, let url = URL(string: address) {
+                UIApplication.shared.open(url)
+            }
+
+            return true
+        }
+    }
+
+    /// Keeps what JARVIS last read out, on either node, so "the second one" works here - §15.
+    ///
+    /// The offers come down with addresses and no browser handles; the PC drops those before they
+    /// cross, because a handle to an element in a tab on the desk means nothing on this phone.
+    /// What this gives the phone is the ability to recognise an offer and open its address, which
+    /// is what the owner meant, and not the ability to drive the desk's tab, which it has not got.
+    func collectWhatWasOffered() async {
+        do {
+            let reply = try await exchanging("conversation.current", [:])
+            let rows = reply["offered"] as? [[String: Any]] ?? []
+
+            let offers = rows.compactMap { row -> MobileOffer? in
+                guard let title = row["title"] as? String, !title.isEmpty else { return nil }
+
+                return MobileOffer(
+                    position: (row["position"] as? NSNumber)?.intValue ?? 0,
+                    title: title,
+                    address: row["address"] as? String)
+            }
+
+            // An empty list is an answer too: the window passed at the desk, and resolving "the
+            // second one" against what it used to hold would be worse than not resolving it.
+            MobileOfferMemory.shared.hold(offers, from: pcName)
+        } catch {
+            // Continuity is a convenience. Nothing about this turn depends on it.
+            note("conversation.current: \(error.localizedDescription)")
+        }
+    }
+
     /// Files one observation this phone made, and lets the client decide when it travels.
     ///
     /// Takes the exchange rather than reaching for it, so an observation made with the PC off is
@@ -1287,6 +1360,15 @@ final class AppModel: ObservableObject {
         // handle itself: it understands the sentence better than any reading here and owns the
         // device state. What this phone could have done becomes the fallback rather than being
         // discarded, which is what makes a PC dropping mid-request survivable.
+        // One of the things JARVIS last read out, when the desk cannot be asked - priority §15.
+        //
+        // Only when the desk cannot be asked, deliberately. With the PC answering it owns this:
+        // it has the live list, it understands the sentence better than any reading here, and it
+        // can act on the tab it actually has. This is the other case - results read out at the
+        // desk, picked from on the phone with the desk asleep - and what the phone can do about
+        // it is open the address. Not drive the tab, which is somewhere else entirely.
+        if !link.isOnline, await openWhatWasOffered(request, spoken: spoken) { return }
+
         let decision = MobileCapabilities.decide(request, devices: SmartHomeModel.shared.standby, state: nodeState)
 
         if await follow(decision.lane, request: request, spoken: spoken) { return }

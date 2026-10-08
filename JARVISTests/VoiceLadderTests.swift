@@ -207,14 +207,23 @@ final class VoiceLadderTests: XCTestCase {
         cache.forget()
         defer { cache.forget() }
 
+        // Spelled out rather than numbered, since priority §14: a sentence with a digit in it
+        // carries a value, is stale the next time it would be played, and the cache now refuses
+        // to hold one at all. The thing under test here is the bound, not that rule.
+        func phrase(_ index: Int) -> String {
+            let letters = Array("abcdefghijklmnopqrstuvwxyz")
+
+            return "Sentence \(letters[index / 26])\(letters[index % 26])."
+        }
+
         for index in 0..<(VoiceCache.most + 10) {
-            cache.keep("Sentence \(index).", wav: Data(repeating: 3, count: 512), mouth: [])
+            cache.keep(phrase(index), wav: Data(repeating: 3, count: 512), mouth: [])
         }
 
         XCTAssertLessThanOrEqual(cache.held, VoiceCache.most)
 
         // And what survived is what was kept most recently, which is the useful end.
-        XCTAssertTrue(cache.holds("Sentence \(VoiceCache.most + 9)."))
+        XCTAssertTrue(cache.holds(phrase(VoiceCache.most + 9)))
     }
 
     func testSentinel() {}
