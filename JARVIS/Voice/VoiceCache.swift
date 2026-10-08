@@ -31,6 +31,12 @@ final class VoiceCache: ObservableObject {
     @Published private(set) var held = 0
     @Published private(set) var bytes = 0
 
+    /// Sentences rendered and deliberately not kept, because they carried a value - priority §14.
+    @Published private(set) var notKept = 0
+
+    /// Why the last one was not kept. Shown in the voice diagnosis, never a number of its own.
+    @Published private(set) var lastNotKept: String?
+
     private struct Entry: Codable {
         let key: String
         let words: String
@@ -84,10 +90,23 @@ final class VoiceCache: ObservableObject {
     }
 
     /// Keeps a rendering the PC has just sent.
+    /// Keeps the audio for a sentence worth keeping, and refuses one that is not - priority §14.
+    ///
+    /// The refusal is here rather than at the call site on purpose. Every sentence the PC renders
+    /// arrives through one path, and a caller that forgot would quietly fill the bank with
+    /// percentages; a sentence carrying a value is stale the next time it would be played, and the
+    /// slot it took belongs to a phrase JARVIS says every day.
     func keep(_ words: String, wav: Data, mouth: [Float]) {
         load()
 
         guard !voiceId.isEmpty, !wav.isEmpty, wav.count < Self.mostBytes / 4 else { return }
+
+        guard SpokenPhrase.worthKeeping(words) else {
+            notKept += 1
+            lastNotKept = SpokenPhrase.whyNotKept(words)
+
+            return
+        }
 
         let key = Self.key(words, voiceId)
 
@@ -135,7 +154,20 @@ final class VoiceCache: ObservableObject {
             entries.removeValue(forKey: key)
         }
 
-        var order = entries.values.sorted { $0.usedAt > $1.usedAt }
+        // The bank last - priority §14. Within each group the stalest goes first, as before, but
+        // a sentence the owner happened to say once never evicts one of the phrases the bank
+        // exists to hold: those are what make JARVIS's own voice work with the desk asleep, and
+        // re-warming them costs three renders a connection.
+        // One comparator rather than two sorts, because Swift's sort is not stable and a second
+        // pass would scramble the staleness order inside each group.
+        var order = entries.values.sorted { left, right in
+            let leftIsBank = SpokenPhrase.isOneOfTheBanks(left.words)
+            let rightIsBank = SpokenPhrase.isOneOfTheBanks(right.words)
+
+            if leftIsBank != rightIsBank { return leftIsBank }
+
+            return left.usedAt > right.usedAt
+        }
 
         while order.count > Self.most || order.reduce(0, { $0 + $1.bytes }) > Self.mostBytes {
             guard let stalest = order.popLast() else { break }

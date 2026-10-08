@@ -177,11 +177,14 @@ final class VoiceDiagnosisTests: XCTestCase {
         runtime: Bool = false,
         cached: Int = 0,
         route: VoiceRoute = .text(""),
-        systemVoice: Bool = false
+        systemVoice: Bool = false,
+        bankHeld: Int = 0,
+        notKept: Int = 0
     ) -> VoiceDiagnosis {
         VoiceDiagnosis(
             modelPresent: model, configPresent: config, checksumValid: checksum,
             runtimeAvailable: runtime, cachedPhrases: cached, cachedBytes: cached * 4096,
+            bankHeld: bankHeld, bankTotal: SpokenKind.allCases.count, notKept: notKept,
             lastRendered: nil, systemVoiceAllowed: systemVoice, route: route)
     }
 

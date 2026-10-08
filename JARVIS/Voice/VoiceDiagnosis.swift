@@ -26,6 +26,17 @@ struct VoiceDiagnosis: Equatable {
     let cachedPhrases: Int
     let cachedBytes: Int
 
+    /// How many of the phrase bank's own sentences are held, out of how many there are.
+    ///
+    /// The number the owner actually cares about when the desk is asleep - priority §14. "Forty
+    /// phrases cached" says nothing about whether the handful JARVIS says constantly are among
+    /// them, and those are what make the top rung reachable offline.
+    let bankHeld: Int
+    let bankTotal: Int
+
+    /// Sentences rendered and deliberately not kept, because they carried a value - priority §14.
+    let notKept: Int
+
     /// The last phrase the PC rendered for this phone, for the owner to recognise.
     let lastRendered: String?
 
@@ -42,6 +53,11 @@ struct VoiceDiagnosis: Equatable {
              cachedPhrases > 0,
              cachedPhrases > 0
                 ? "\(cachedPhrases) phrases, \(cachedBytes / 1024) kB, in JARVIS's own voice"
+                    + " - \(bankHeld) of the \(bankTotal) JARVIS says most"
+                    + (notKept > 0
+                        ? ". \(notKept) answers weren't kept: they carried a value that would be"
+                            + " stale next time"
+                        : "")
                 : "nothing cached yet; phrases arrive as your PC renders them"),
 
             ("JARVIS's voice on this phone",

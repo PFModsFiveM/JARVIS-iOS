@@ -1718,6 +1718,9 @@ final class AppModel: ObservableObject {
             runtimeAvailable: false,
             cachedPhrases: VoiceCache.shared.held,
             cachedBytes: VoiceCache.shared.bytes,
+            bankHeld: SpokenKind.allCases.count - VoiceCache.shared.missing().count,
+            bankTotal: SpokenKind.allCases.count,
+            notKept: VoiceCache.shared.notKept,
             lastRendered: lastRenderedPhrase,
             systemVoiceAllowed: systemVoiceAllowed,
             route: MobileVoiceRouter.route(

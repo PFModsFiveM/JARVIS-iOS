@@ -71,12 +71,29 @@ enum SpokenKind: String, CaseIterable, Codable {
     // Power.
     case headsetLow
 
+    // What this phone says for itself when the desk is asleep - priority §14.
+    //
+    // Added because these are the sentences priority §3 made the phone answer on its own, and the
+    // moment JARVIS answers for itself is exactly the moment the PC cannot render for it. A
+    // pleasantry read out in the phone's own British voice is a different assistant saying hello.
+    case hereAndListening
+    case greeting
+    case howIAm
+    case thanks
+    case goodbye
+    case nothingWantsAttention
+    case houseUnreachable
+    case noSuchDevice
+    case nothingReadable
+
     /// The words, so the bank can be warmed by asking the PC to render exactly these.
     ///
-    /// Held here rather than in `MobilePhrases` because what is rendered has to be byte-identical
-    /// to what is later looked up, and two lists would drift. Anything with a value in it - a
-    /// battery percentage, a device name - is deliberately absent: it cannot be pre-rendered, and
-    /// pretending otherwise would put a stale number in JARVIS's own voice.
+    /// Where a sentence has an owner elsewhere it is read from there; the rest are written here.
+    /// Either way there is one copy, because what is rendered has to be byte-identical to what is
+    /// later looked up and two lists would drift. Anything with a value in it - a battery
+    /// percentage, a device name - is deliberately absent: it cannot be pre-rendered, and
+    /// pretending otherwise would put a stale number in JARVIS's own voice. `SpokenPhrase` now
+    /// enforces that against every sentence the cache is offered, not just against this list.
     var words: String {
         switch self {
         case .certainly: return "Certainly, sir."
@@ -99,6 +116,19 @@ enum SpokenKind: String, CaseIterable, Codable {
         case .locationUnknown: return "I can't confirm your current location, sir."
         case .locationStale: return "Your last known location is out of date, sir."
         case .headsetLow: return "Your headset is running low, sir."
+
+        // Taken from MobilePhrases rather than written out again. The rule above - what is
+        // rendered has to be byte-identical to what is looked up - is why there is one list, and
+        // these sentences already have an owner.
+        case .hereAndListening: return MobilePhrases.hereAndListening()
+        case .greeting: return MobilePhrases.greeting()
+        case .howIAm: return MobilePhrases.howIAm()
+        case .thanks: return MobilePhrases.welcome()
+        case .goodbye: return MobilePhrases.untilLater()
+        case .nothingWantsAttention: return MobilePhrases.nothingWantsAttention()
+        case .houseUnreachable: return MobilePhrases.houseUnreachable()
+        case .noSuchDevice: return MobilePhrases.noSuchDevice()
+        case .nothingReadable: return MobilePhrases.nothingReadable()
         }
     }
 }
