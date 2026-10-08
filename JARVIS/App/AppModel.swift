@@ -1243,7 +1243,7 @@ final class AppModel: ObservableObject {
             // new page rather than carrying on with the owner's tab - and it should be on screen
             // whether or not the address turns out to be openable.
             if MobileOffers.reopenable(offer), let address = offer.address, let url = URL(string: address) {
-                UIApplication.shared.open(url)
+                _ = await UIApplication.shared.open(url)
             }
 
             return true
